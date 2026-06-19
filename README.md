@@ -39,8 +39,32 @@ skip the example when embedding this project via `add_subdirectory`.
 | `projection` | `include/segment_gate/projection.hpp` | Fisheye/pinhole projection, 3D cone clipping |
 | `render` | `include/segment_gate/render.hpp` | Mask compositing (per-gate outer/inner face OR/AND) |
 | `scene` | `include/segment_gate/scene.hpp` | YAML config loading + `renderPose()` orchestration |
+| `GateRenderer` | `include/segment_gate/gate_renderer.hpp` | Loads all configs once, then renders masks for many poses |
 
-`scene::renderPose()` is the main entry point most consumers will call.
+## Usage from other C++ code
+
+`GateRenderer` is the recommended entry point: construct it once with the
+three config file paths, then call `render()` per pose.
+
+```cpp
+#include "segment_gate/gate_renderer.hpp"
+
+segment_gate::GateRenderer renderer("config/gates_config.yaml",
+                                     "config/config.yaml",
+                                     "config/camera_calibration.yaml");
+
+cv::Mat mask = renderer.render(segment_gate::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
+// or: renderer.render(x, y, z, roll, pitch, yaw);
+```
+
+Pass `rectified = true` as the 4th constructor argument to render as seen by
+a rectified (pinhole) view of the fisheye camera instead of the raw fisheye
+projection.
+
+The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
+`loadCameraCalibration`, `renderPose`, ...) are still available directly if
+you need more control (e.g. reloading a gate layout without re-reading the
+camera calibration).
 
 ## Example
 

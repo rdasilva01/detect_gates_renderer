@@ -9,7 +9,7 @@
 
 #include <opencv2/imgcodecs.hpp>
 
-#include "segment_gate/projection.hpp"
+#include "segment_gate/gate_renderer.hpp"
 #include "segment_gate/scene.hpp"
 
 namespace {
@@ -66,24 +66,10 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto gates = loadGatesConfig(args.gatesConfig);
-    const auto [dronePos, gateDims] = loadDroneConfig(args.droneConfig);
-    const CameraCalibration calib = loadCameraCalibration(args.cameraConfig);
+    const DronePose dronePos = loadDroneConfig(args.droneConfig).first;
+    const GateRenderer renderer(args.gatesConfig, args.droneConfig, args.cameraConfig, args.rectified);
 
-    cv::Mat cameraMatrix = calib.cameraMatrix;
-    cv::Mat distCoeffs = calib.distCoeffs;
-    bool fisheye = true;
-    double thetaMax = 89.0 * CV_PI / 180.0;
-
-    if (args.rectified) {
-        cameraMatrix = rectifiedCameraMatrix(cameraMatrix, distCoeffs, calib.imageWidth, calib.imageHeight);
-        distCoeffs = cv::Mat::zeros(4, 1, CV_64F);
-        thetaMax = rectifiedThetaMax(cameraMatrix, calib.imageWidth, calib.imageHeight);
-        fisheye = false;
-    }
-
-    const cv::Mat mask = renderPose(gates, gateDims, dronePos, calib.tBaseCam, cameraMatrix, distCoeffs,
-                                     calib.imageWidth, calib.imageHeight, fisheye, thetaMax);
+    const cv::Mat mask = renderer.render(dronePos);
 
     if (!cv::imwrite(args.output, mask)) {
         std::cerr << "error: failed to write " << args.output << "\n";

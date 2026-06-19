@@ -20,6 +20,7 @@ add_library(segment_gate
     src/projection.cpp
     src/render.cpp
     src/scene.cpp
+    src/gate_renderer.cpp
 )
 add_library(segment_gate::segment_gate ALIAS segment_gate)
 

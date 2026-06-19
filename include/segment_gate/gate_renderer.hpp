@@ -1,0 +1,46 @@
+// High-level entry point: load configs once, then render masks for many poses.
+#pragma once
+
+#include <map>
+#include <string>
+
+#include <opencv2/core.hpp>
+
+#include "segment_gate/scene.hpp"
+
+namespace segment_gate {
+
+// Loads a gates layout, gate dimensions, and camera calibration once, then
+// renders segmentation masks for arbitrary drone poses without re-parsing
+// config files on every call.
+class GateRenderer {
+public:
+    // `droneConfigPath` only needs to provide `gate_dimensions`; any
+    // `drone_position` in that file is ignored (each `render()` call
+    // supplies its own pose).
+    //
+    // If `rectified` is true, masks are rendered as seen by a rectified
+    // (pinhole) view of the fisheye camera (matching the `-r` example flag)
+    // instead of the raw fisheye projection.
+    GateRenderer(const std::string& gatesConfigPath, const std::string& droneConfigPath,
+                 const std::string& cameraConfigPath, bool rectified = false);
+
+    cv::Mat render(const DronePose& pose) const;
+    cv::Mat render(double x, double y, double z, double roll, double pitch, double yaw) const;
+
+    int imageWidth() const { return imageWidth_; }
+    int imageHeight() const { return imageHeight_; }
+
+private:
+    std::map<std::string, GatePose> gates_;
+    GateDims gateDims_;
+    Transform tBaseCam_;
+    cv::Mat cameraMatrix_;
+    cv::Mat distCoeffs_;
+    int imageWidth_ = 0;
+    int imageHeight_ = 0;
+    bool fisheye_ = true;
+    double thetaMax_ = 89.0 * CV_PI / 180.0;
+};
+
+}  // namespace segment_gate
