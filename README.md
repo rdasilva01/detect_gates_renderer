@@ -163,7 +163,8 @@ python examples/python/visualize_detections.py --output overlay.png
 equivalent): it renders continuously in a window (with an FPS counter) and
 lets you fly around in the drone's body frame with the keyboard (arrows =
 forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
-Tab = toggle the pose-detection overlay on/off, Esc = quit). Requires a
+Tab = toggle the pose-detection overlay on/off, Space = toggle rectified
+vs. raw fisheye view, Esc = quit). Requires a
 GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 
 ```sh

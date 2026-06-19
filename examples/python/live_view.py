@@ -12,6 +12,7 @@ applied in the drone's current body frame):
   q/e               : roll -/+15 deg
   r/f               : pitch -/+15 deg
   Tab               : toggle pose-detection overlay
+  Space             : toggle rectified (pinhole) vs. raw fisheye view
   Esc               : quit
 
 Requires a GUI-enabled OpenCV build (plain `opencv-python`, not
@@ -91,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gates-config", default="config/gates_config.yaml")
     parser.add_argument("--drone-config", default="config/config.yaml")
     parser.add_argument("--camera-config", default="config/camera_calibration.yaml")
-    parser.add_argument("-r", "--rectified", action="store_true")
+    parser.add_argument("-r", "--rectified", action="store_true", help="start in rectified view (toggle with Space)")
     parser.add_argument("--x", type=float, default=19.0)
     parser.add_argument("--y", type=float, default=2.0)
     parser.add_argument("--z", type=float, default=0.155)
@@ -105,11 +106,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    renderer = GateRenderer(args.gates_config, args.drone_config, args.camera_config, args.rectified)
+    # GateRenderer's `rectified` flag is constructor-only, so build both up
+    # front and just switch which one we call each frame.
+    renderers = {
+        False: GateRenderer(args.gates_config, args.drone_config, args.camera_config, False),
+        True: GateRenderer(args.gates_config, args.drone_config, args.camera_config, True),
+    }
 
     pos = np.array([args.x, args.y, args.z])
     roll, pitch, yaw = args.roll, args.pitch, args.yaw
     show_pose = True
+    rectified = args.rectified
 
     window = "live_view"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
@@ -119,6 +126,7 @@ def main() -> None:
     prev_time = time.perf_counter()
 
     while True:
+        renderer = renderers[rectified]
         x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
         mask = renderer.render(x, y, z, roll, pitch, yaw)
         frame = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR) if show_pose else mask
@@ -137,7 +145,7 @@ def main() -> None:
 
         cv2.imshow(window, frame)
         print(f"\rpos=({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})  rpy=({roll:.2f}, {pitch:.2f}, {yaw:.2f})  "
-              f"fps={ema_fps:.1f}  ", end="", flush=True)
+              f"fps={ema_fps:.1f}  rectified={rectified}  ", end="", flush=True)
 
         key = cv2.waitKeyEx(1)
         if key == -1:
@@ -148,6 +156,9 @@ def main() -> None:
         ascii_key = key & 0xFF
         if ascii_key == 9:  # Tab
             show_pose = not show_pose
+            continue
+        if ascii_key == ord(" "):
+            rectified = not rectified
             continue
 
         r_old = rpy_to_matrix(roll, pitch, yaw)
