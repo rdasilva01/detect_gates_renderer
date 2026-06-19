@@ -1,0 +1,33 @@
+/**:
+  ros__parameters:
+    image_width: 820
+    image_height: 616
+    camera_name: camera
+    encoding: "bgr8"
+    camera_matrix:
+      rows: 3
+      cols: 3
+      # Camera matrix: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+      data: [281.80250552990815, 0.0, 414.1238301002935, 0.0, 281.9489796135074, 300.89428658847705, 0.0, 0.0, 1.0]
+    distortion_model: fisheye
+    distortion_coefficients:
+      rows: 1
+      cols: 4
+      data: [0.0, 0.0, 0.0, 0.0]
+    rectification_matrix:
+      rows: 3
+      cols: 3
+      data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    projection_matrix:
+      rows: 3
+      cols: 4
+      # Projection matrix: [fx, 0, cx, tx, 0, fy, cy, ty, 0, 0, 1, 0]
+      data: [281.80250552990815, 0.0, 414.1238301002935, 0.0, 0.0, 281.9489796135074, 300.89428658847705, 0.0, 0.0, 0.0, 1.0, 0.0]
+    camera_transform:
+      parent_frame: base_link
+      x: -0.024556888532491966
+      y: 0.008205357667701989
+      z: 0.06842954391539481
+      roll: -0.681636015731699
+      pitch: 0.023546721439969387
+      yaw: -1.5316179947728867
