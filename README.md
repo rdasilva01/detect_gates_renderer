@@ -1,4 +1,4 @@
-# segment_gate
+# segment_gate_renderer
 
 A standalone C++ library for rendering gate-segmentation masks: given a gate
 layout, a drone pose, and a fisheye camera calibration, it renders a binary
@@ -26,9 +26,9 @@ cmake -B build
 cmake --build build
 ```
 
-This builds the `segment_gate` static library and (by default) the
-`render_segmentation` example. Set `-DSEGMENT_GATE_BUILD_EXAMPLES=OFF` to
-skip the example when embedding this project via `add_subdirectory`.
+This builds the `segment_gate_renderer` static library and (by default) the
+`render_segmentation` example. Set `-DSEGMENT_GATE_RENDERER_BUILD_EXAMPLES=OFF`
+to skip the example when embedding this project via `add_subdirectory`.
 
 ## Library layout
 
@@ -84,6 +84,6 @@ the fisheye camera instead of the raw fisheye projection.
 After `cmake --install build`, downstream projects can:
 
 ```cmake
-find_package(segment_gate REQUIRED)
-target_link_libraries(my_target PRIVATE segment_gate::segment_gate)
+find_package(segment_gate_renderer REQUIRED)
+target_link_libraries(my_target PRIVATE segment_gate_renderer::segment_gate_renderer)
 ```

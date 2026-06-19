@@ -1,2 +1,2 @@
 add_executable(render_segmentation render_segmentation.cpp)
-target_link_libraries(render_segmentation PRIVATE segment_gate::segment_gate)
+target_link_libraries(render_segmentation PRIVATE segment_gate_renderer::segment_gate_renderer)
