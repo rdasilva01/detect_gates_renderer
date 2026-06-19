@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const DronePose dronePos = loadDroneConfig(args.droneConfig).first;
+    const DronePose dronePos{19.0, 2.0, 0.155, 0.0, 0.0, 3.13};
     const GateRenderer renderer(args.gatesConfig, args.droneConfig, args.cameraConfig, args.rectified);
 
     const cv::Mat mask = renderer.render(dronePos);

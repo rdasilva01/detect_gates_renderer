@@ -8,7 +8,19 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Lets this static library be linked into shared objects (e.g. the Python
+# extension module), and is harmless for executables/static-only consumers.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 option(SEGMENT_GATE_RENDERER_BUILD_EXAMPLES "Build the example executables" ON)
+# Auto-enabled when building via `pip install` (scikit-build-core sets SKBUILD,
+# but to a version string like "2", not a literal ON/OFF that option() understands).
+if(SKBUILD)
+    set(SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT ON)
+else()
+    set(SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT OFF)
+endif()
+option(SEGMENT_GATE_RENDERER_BUILD_PYTHON "Build the Python bindings" ${SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT})
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d imgcodecs)
 find_package(Eigen3 REQUIRED)
@@ -70,4 +82,8 @@ install(FILES
 
 if(SEGMENT_GATE_RENDERER_BUILD_EXAMPLES)
     add_subdirectory(examples)
+endif()
+
+if(SEGMENT_GATE_RENDERER_BUILD_PYTHON)
+    add_subdirectory(python)
 endif()

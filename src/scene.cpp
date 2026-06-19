@@ -46,18 +46,12 @@ std::map<std::string, GatePose> loadGatesConfig(const std::string& path) {
     return gates;
 }
 
-std::pair<DronePose, GateDims> loadDroneConfig(const std::string& path) {
+GateDims loadGateDims(const std::string& path) {
     const YAML::Node root = YAML::LoadFile(path);
 
-    const YAML::Node& pos = root["drone_position"];
-    DronePose dronePos{pos["x"].as<double>(), pos["y"].as<double>(), pos["z"].as<double>(),
-                        pos["r"].as<double>(), pos["p"].as<double>(), pos["yaw"].as<double>()};
-
     const YAML::Node& dims = root["gate_dimensions"];
-    GateDims gateDims{dims["outer_size"].as<double>(), dims["inner_size"].as<double>(),
-                       dims["thickness"] ? dims["thickness"].as<double>() : 0.0};
-
-    return {dronePos, gateDims};
+    return GateDims{dims["outer_size"].as<double>(), dims["inner_size"].as<double>(),
+                     dims["thickness"] ? dims["thickness"].as<double>() : 0.0};
 }
 
 CameraCalibration loadCameraCalibration(const std::string& path) {

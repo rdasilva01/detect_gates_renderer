@@ -1,0 +1,16 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "segment_gate_renderer"
+version = "0.1.0"
+description = "Python bindings for the segment_gate_renderer gate-segmentation mask renderer"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = ["numpy"]
+
+[tool.scikit-build]
+wheel.packages = ["python/segment_gate_renderer"]
+cmake.build-type = "Release"
+cmake.args = ["-DSEGMENT_GATE_RENDERER_BUILD_EXAMPLES=OFF"]

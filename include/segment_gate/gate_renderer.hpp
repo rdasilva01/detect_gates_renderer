@@ -15,9 +15,8 @@ namespace segment_gate {
 // config files on every call.
 class GateRenderer {
 public:
-    // `droneConfigPath` only needs to provide `gate_dimensions`; any
-    // `drone_position` in that file is ignored (each `render()` call
-    // supplies its own pose).
+    // `droneConfigPath` only needs to provide `gate_dimensions`; each
+    // `render()` call supplies its own pose.
     //
     // If `rectified` is true, masks are rendered as seen by a rectified
     // (pinhole) view of the fisheye camera (matching the `-r` example flag)

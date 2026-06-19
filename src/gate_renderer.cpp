@@ -7,7 +7,7 @@ namespace segment_gate {
 GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string& droneConfigPath,
                             const std::string& cameraConfigPath, bool rectified) {
     gates_ = loadGatesConfig(gatesConfigPath);
-    gateDims_ = loadDroneConfig(droneConfigPath).second;
+    gateDims_ = loadGateDims(droneConfigPath);
 
     const CameraCalibration calib = loadCameraCalibration(cameraConfigPath);
     tBaseCam_ = calib.tBaseCam;

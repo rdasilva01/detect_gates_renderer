@@ -18,6 +18,7 @@ original Python implementation.
 - OpenCV (`core`, `imgproc`, `calib3d`, `imgcodecs`) — fisheye projection and rasterization
 - Eigen3 — linear algebra
 - yaml-cpp — config file parsing
+- (optional, for the Python bindings) Python >= 3.8, [nanobind](https://github.com/wjakob/nanobind), [scikit-build-core](https://github.com/scikit-build/scikit-build-core) — installed automatically by `pip install .`
 
 ## Build
 
@@ -86,4 +87,29 @@ After `cmake --install build`, downstream projects can:
 ```cmake
 find_package(segment_gate_renderer REQUIRED)
 target_link_libraries(my_target PRIVATE segment_gate_renderer::segment_gate_renderer)
+```
+
+## Python bindings
+
+Python bindings for `GateRenderer` are built with
+[nanobind](https://github.com/wjakob/nanobind) and packaged with
+[scikit-build-core](https://github.com/scikit-build/scikit-build-core).
+
+```sh
+pip install .
+```
+
+```python
+from segment_gate_renderer import DronePose, GateRenderer
+
+renderer = GateRenderer("config/gates_config.yaml", "config/config.yaml", "config/camera_calibration.yaml")
+mask = renderer.render(DronePose(x=19.0, y=2.0, z=0.155, roll=0.0, pitch=0.0, yaw=3.13))
+# `mask` is a (height, width) uint8 numpy array. `renderer.render(x, y, z, roll, pitch, yaw)` also works.
+```
+
+See `examples/python/render_segmentation.py` for a runnable example (mirrors
+`examples/render_segmentation.cpp`):
+
+```sh
+python examples/python/render_segmentation.py --output mask.png
 ```

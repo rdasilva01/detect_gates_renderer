@@ -37,8 +37,8 @@ struct CameraCalibration {
 // Load a gates_config.yaml's `gates_poses` map (name -> [x, y, z, yaw]).
 std::map<std::string, GatePose> loadGatesConfig(const std::string& path);
 
-// Load a config.yaml's `drone_position` and `gate_dimensions` entries.
-std::pair<DronePose, GateDims> loadDroneConfig(const std::string& path);
+// Load a config.yaml's `gate_dimensions` entry.
+GateDims loadGateDims(const std::string& path);
 
 // Load a ROS2-style camera_calibration.yaml, unwrapping the `/**: ros__parameters` namespace.
 CameraCalibration loadCameraCalibration(const std::string& path);

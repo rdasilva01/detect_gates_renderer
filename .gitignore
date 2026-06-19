@@ -3,3 +3,8 @@ build/
 *.obj
 *.png
 .cache/
+__pycache__/
+*.egg-info/
+dist/
+*.whl
+*.so
