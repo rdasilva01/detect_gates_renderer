@@ -1,10 +1,10 @@
-#include "segment_gate/projection.hpp"
+#include "detect_gates/projection.hpp"
 
 #include <cmath>
 
 #include <opencv2/calib3d.hpp>
 
-namespace segment_gate {
+namespace detect_gates {
 
 namespace {
 
@@ -113,4 +113,4 @@ double rectifiedThetaMax(const cv::Mat& newCameraMatrix, int imageWidth, int ima
     return maxAngle;
 }
 
-}  // namespace segment_gate
+}  // namespace detect_gates

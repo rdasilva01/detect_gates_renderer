@@ -8,7 +8,7 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(_segment_gate_renderer src/bindings.cpp)
-target_link_libraries(_segment_gate_renderer PRIVATE segment_gate_renderer::segment_gate_renderer)
+nanobind_add_module(_detect_gates_renderer src/bindings.cpp)
+target_link_libraries(_detect_gates_renderer PRIVATE detect_gates_renderer::detect_gates_renderer)
 
-install(TARGETS _segment_gate_renderer LIBRARY DESTINATION segment_gate_renderer)
+install(TARGETS _detect_gates_renderer LIBRARY DESTINATION detect_gates_renderer)

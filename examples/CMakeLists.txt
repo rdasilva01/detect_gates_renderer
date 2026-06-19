@@ -1,2 +1,5 @@
-add_executable(render_segmentation render_segmentation.cpp)
-target_link_libraries(render_segmentation PRIVATE segment_gate_renderer::segment_gate_renderer)
+add_executable(detect_gates detect_gates.cpp)
+target_link_libraries(detect_gates PRIVATE detect_gates_renderer::detect_gates_renderer)
+
+add_executable(visualize_detections visualize_detections.cpp)
+target_link_libraries(visualize_detections PRIVATE detect_gates_renderer::detect_gates_renderer)

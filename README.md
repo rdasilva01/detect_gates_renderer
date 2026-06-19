@@ -1,15 +1,20 @@
-# segment_gate_renderer
+# detect_gates_renderer
 
-A standalone C++ library for rendering gate-segmentation masks: given a gate
-layout, a drone pose, and a fisheye camera calibration, it renders a binary
-mask of what the camera would see (255 = gate frame, 0 = background).
+A standalone C++ library for rendering gate-segmentation masks and pose/
+keypoint detections: given a gate layout, a drone pose, and a fisheye camera
+calibration, it can render either a binary segmentation mask of what the
+camera would see (255 = gate frame, 0 = background), or per-gate keypoint
+(4 inner + 4 outer corner) and bounding-box detections with cross-gate
+occlusion handling.
 
-This is a C++ port of the geometry/projection/rendering pipeline from the
-`map_error_net` Python project (`transforms.py`, `gates.py`,
-`projection.py`, `render.py`, `scene.py`). It does not include any of the
-training/ML/dataset-generation code from that project — just the
-deterministic mask-rendering pipeline, verified pixel-for-pixel against the
-original Python implementation.
+The segmentation pipeline is a C++ port of the geometry/projection/rendering
+pipeline from the `map_error_net` Python project (`transforms.py`,
+`gates.py`, `projection.py`, `render.py`, `scene.py`), verified
+pixel-for-pixel against the original Python implementation. The pose/
+keypoint detection mode is a from-scratch C++ addition (not present in
+`map_error_net`), porting the core geometry of a reference ROS2 gate-
+projection node, adapted to this library's real 3D gate geometry (the
+reference node assumes a flat, zero-thickness gate).
 
 ## Dependencies
 
@@ -27,66 +32,91 @@ cmake -B build
 cmake --build build
 ```
 
-This builds the `segment_gate_renderer` static library and (by default) the
-`render_segmentation` example. Set `-DSEGMENT_GATE_RENDERER_BUILD_EXAMPLES=OFF`
+This builds the `detect_gates_renderer` static library and (by default) the
+`detect_gates` example. Set `-DDETECT_GATES_RENDERER_BUILD_EXAMPLES=OFF`
 to skip the example when embedding this project via `add_subdirectory`.
 
 ## Library layout
 
 | Module | Header | Responsibility |
 | --- | --- | --- |
-| `transforms` | `include/segment_gate/transforms.hpp` | RPY <-> rotation matrix, pose composition/inversion |
-| `gates` | `include/segment_gate/gates.hpp` | Gate corner/face geometry, edge subdivision |
-| `projection` | `include/segment_gate/projection.hpp` | Fisheye/pinhole projection, 3D cone clipping |
-| `render` | `include/segment_gate/render.hpp` | Mask compositing (per-gate outer/inner face OR/AND) |
-| `scene` | `include/segment_gate/scene.hpp` | YAML config loading + `renderPose()` orchestration |
-| `GateRenderer` | `include/segment_gate/gate_renderer.hpp` | Loads all configs once, then renders masks for many poses |
+| `transforms` | `include/detect_gates/transforms.hpp` | RPY <-> rotation matrix, pose composition/inversion |
+| `gates` | `include/detect_gates/gates.hpp` | Gate corner/face geometry, edge subdivision |
+| `projection` | `include/detect_gates/projection.hpp` | Fisheye/pinhole projection, 3D cone clipping |
+| `render` | `include/detect_gates/render.hpp` | Mask compositing (per-gate outer/inner face OR/AND) |
+| `scene` | `include/detect_gates/scene.hpp` | YAML config loading + `renderPose()`/`detectGates()` orchestration |
+| `GateRenderer` | `include/detect_gates/gate_renderer.hpp` | Loads all configs once, then renders masks/detections for many poses |
 
 ## Usage from other C++ code
 
 `GateRenderer` is the recommended entry point: construct it once with the
-three config file paths, then call `render()` per pose.
+three config file paths, then call `render()` (segmentation mask) or
+`renderDetections()` (keypoint/bbox detections) per pose — both are always
+available on the same instance.
 
 ```cpp
-#include "segment_gate/gate_renderer.hpp"
+#include "detect_gates/gate_renderer.hpp"
 
-segment_gate::GateRenderer renderer("config/gates_config.yaml",
+detect_gates::GateRenderer renderer("config/gates_config.yaml",
                                      "config/config.yaml",
                                      "config/camera_calibration.yaml");
 
-cv::Mat mask = renderer.render(segment_gate::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
+cv::Mat mask = renderer.render(detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
 // or: renderer.render(x, y, z, roll, pitch, yaw);
+
+std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
+    detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
+// Optional 2nd arg: minVisibleCorners (default 3) -- gates with fewer than
+// this many visible keypoints (before or after cross-gate occlusion) are
+// omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
+// (x1,y1,x2,y2 over visible keypoints only), and 8 `keypoints`
+// (4 *_inner + 4 *_outer, each with name/x/y/visible).
 ```
 
 Pass `rectified = true` as the 4th constructor argument to render as seen by
 a rectified (pinhole) view of the fisheye camera instead of the raw fisheye
-projection.
+projection (applies to both `render()` and `renderDetections()`).
 
 The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
-`loadCameraCalibration`, `renderPose`, ...) are still available directly if
-you need more control (e.g. reloading a gate layout without re-reading the
-camera calibration).
+`loadCameraCalibration`, `renderPose`, `detectGates`, ...) are still
+available directly if you need more control (e.g. reloading a gate layout
+without re-reading the camera calibration).
 
 ## Example
 
 ```sh
-./build/examples/render_segmentation \
+./build/examples/detect_gates \
     --gates-config config/gates_config.yaml \
     --drone-config config/config.yaml \
     --camera-config config/camera_calibration.yaml \
+    --mode segment \
     --output mask.png
 ```
 
-Pass `-r`/`--rectified` to render as seen by a rectified (pinhole) view of
-the fisheye camera instead of the raw fisheye projection.
+Pass `--mode pose` to write a JSON array of per-gate keypoint/bbox
+detections instead of a PNG mask (default mode is `segment`). Pass
+`-r`/`--rectified` to render as seen by a rectified (pinhole) view of the
+fisheye camera instead of the raw fisheye projection.
+
+To visually cross-check that `--mode segment` and `--mode pose` agree for
+the same pose (keypoints should sit on the mask's frame edges, bounding
+boxes should hug each gate's silhouette), run:
+
+```sh
+./build/examples/visualize_detections --output overlay.png
+```
+
+This draws the detections (green = visible keypoint, red = occluded/out of
+view, yellow = bounding box + gate name) directly on top of the segmentation
+mask.
 
 ## Using as a dependency
 
 After `cmake --install build`, downstream projects can:
 
 ```cmake
-find_package(segment_gate_renderer REQUIRED)
-target_link_libraries(my_target PRIVATE segment_gate_renderer::segment_gate_renderer)
+find_package(detect_gates_renderer REQUIRED)
+target_link_libraries(my_target PRIVATE detect_gates_renderer::detect_gates_renderer)
 ```
 
 ## Python bindings
@@ -100,16 +130,42 @@ pip install .
 ```
 
 ```python
-from segment_gate_renderer import DronePose, GateRenderer
+from detect_gates_renderer import DronePose, GateRenderer
 
 renderer = GateRenderer("config/gates_config.yaml", "config/config.yaml", "config/camera_calibration.yaml")
-mask = renderer.render(DronePose(x=19.0, y=2.0, z=0.155, roll=0.0, pitch=0.0, yaw=3.13))
+pose = DronePose(x=19.0, y=2.0, z=0.155, roll=0.0, pitch=0.0, yaw=3.13)
+
+mask = renderer.render(pose)
 # `mask` is a (height, width) uint8 numpy array. `renderer.render(x, y, z, roll, pitch, yaw)` also works.
+
+detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
+for d in detections:
+    print(d.gate, d.bounding_box, [(k.name, k.x, k.y, k.visible) for k in d.keypoints])
 ```
 
-See `examples/python/render_segmentation.py` for a runnable example (mirrors
-`examples/render_segmentation.cpp`):
+See `examples/python/detect_gates.py` for a runnable example (mirrors
+`examples/detect_gates.cpp`):
 
 ```sh
-python examples/python/render_segmentation.py --output mask.png
+python examples/python/detect_gates.py --mode segment --output mask.png
+python examples/python/detect_gates.py --mode pose --output detections.json
+```
+
+And `examples/python/visualize_detections.py` (mirrors
+`examples/visualize_detections.cpp`) to visually cross-check both modes
+agree for the same pose:
+
+```sh
+python examples/python/visualize_detections.py --output overlay.png
+```
+
+`examples/python/live_view.py` is an interactive viewer (Python-only, no C++
+equivalent): it renders continuously in a window (with an FPS counter) and
+lets you fly around in the drone's body frame with the keyboard (arrows =
+forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
+Tab = toggle the pose-detection overlay on/off, Esc = quit). Requires a
+GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
+
+```sh
+python examples/python/live_view.py
 ```

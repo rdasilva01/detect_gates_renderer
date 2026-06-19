@@ -1,16 +1,17 @@
-// nanobind module exposing segment_gate::GateRenderer to Python.
+// nanobind module exposing detect_gates::GateRenderer to Python.
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/vector.h>
 
 #include <opencv2/core.hpp>
 
-#include "segment_gate/gate_renderer.hpp"
-#include "segment_gate/scene.hpp"
+#include "detect_gates/gate_renderer.hpp"
+#include "detect_gates/scene.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
-using namespace segment_gate;
+using namespace detect_gates;
 
 namespace {
 
@@ -29,8 +30,8 @@ nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1>> matToNdarray(const cv::Mat& m
 
 }  // namespace
 
-NB_MODULE(_segment_gate_renderer, m) {
-    m.doc() = "Python bindings for segment_gate_renderer";
+NB_MODULE(_detect_gates_renderer, m) {
+    m.doc() = "Python bindings for detect_gates_renderer";
 
     nb::class_<DronePose>(m, "DronePose")
         .def(nb::init<>())
@@ -48,6 +49,36 @@ NB_MODULE(_segment_gate_renderer, m) {
                    ", pitch=" + std::to_string(p.pitch) + ", yaw=" + std::to_string(p.yaw) + ")";
         });
 
+    nb::class_<Keypoint>(m, "Keypoint")
+        .def_rw("name", &Keypoint::name)
+        .def_rw("x", &Keypoint::x)
+        .def_rw("y", &Keypoint::y)
+        .def_rw("visible", &Keypoint::visible)
+        .def_rw("in_frustum", &Keypoint::inFrustum)
+        .def("__repr__", [](const Keypoint& k) {
+            return "Keypoint(name='" + k.name + "', x=" + std::to_string(k.x) + ", y=" + std::to_string(k.y) +
+                   ", visible=" + (k.visible ? "True" : "False") +
+                   ", in_frustum=" + (k.inFrustum ? "True" : "False") + ")";
+        });
+
+    nb::class_<BoundingBox>(m, "BoundingBox")
+        .def_rw("x1", &BoundingBox::x1)
+        .def_rw("y1", &BoundingBox::y1)
+        .def_rw("x2", &BoundingBox::x2)
+        .def_rw("y2", &BoundingBox::y2)
+        .def("__repr__", [](const BoundingBox& b) {
+            return "BoundingBox(x1=" + std::to_string(b.x1) + ", y1=" + std::to_string(b.y1) +
+                   ", x2=" + std::to_string(b.x2) + ", y2=" + std::to_string(b.y2) + ")";
+        });
+
+    nb::class_<GateDetection>(m, "GateDetection")
+        .def_rw("gate", &GateDetection::gate)
+        .def_rw("bounding_box", &GateDetection::boundingBox)
+        .def_rw("keypoints", &GateDetection::keypoints)
+        .def("__repr__", [](const GateDetection& d) {
+            return "GateDetection(gate='" + d.gate + "', keypoints=" + std::to_string(d.keypoints.size()) + ")";
+        });
+
     nb::class_<GateRenderer>(m, "GateRenderer")
         .def(nb::init<const std::string&, const std::string&, const std::string&, bool>(), "gates_config_path"_a,
              "drone_config_path"_a, "camera_config_path"_a, "rectified"_a = false,
@@ -62,6 +93,18 @@ NB_MODULE(_segment_gate_renderer, m) {
                 return matToNdarray(self.render(x, y, z, roll, pitch, yaw));
             },
             "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a)
+        .def(
+            "render_detections",
+            [](const GateRenderer& self, const DronePose& pose, int minVisibleCorners) {
+                return self.renderDetections(pose, minVisibleCorners);
+            },
+            "pose"_a, "min_visible_corners"_a = 3,
+            "Detect per-gate keypoints/bounding boxes for a DronePose.")
+        .def(
+            "render_detections",
+            [](const GateRenderer& self, double x, double y, double z, double roll, double pitch, double yaw,
+               int minVisibleCorners) { return self.renderDetections(x, y, z, roll, pitch, yaw, minVisibleCorners); },
+            "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a, "min_visible_corners"_a = 3)
         .def_prop_ro("image_width", &GateRenderer::imageWidth)
         .def_prop_ro("image_height", &GateRenderer::imageHeight);
 }

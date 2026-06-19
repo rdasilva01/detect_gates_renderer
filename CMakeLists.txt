@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(segment_gate_renderer VERSION 0.1.0 LANGUAGES CXX)
+project(detect_gates_renderer VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -12,21 +12,21 @@ endif()
 # extension module), and is harmless for executables/static-only consumers.
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-option(SEGMENT_GATE_RENDERER_BUILD_EXAMPLES "Build the example executables" ON)
+option(DETECT_GATES_RENDERER_BUILD_EXAMPLES "Build the example executables" ON)
 # Auto-enabled when building via `pip install` (scikit-build-core sets SKBUILD,
 # but to a version string like "2", not a literal ON/OFF that option() understands).
 if(SKBUILD)
-    set(SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT ON)
+    set(DETECT_GATES_RENDERER_BUILD_PYTHON_DEFAULT ON)
 else()
-    set(SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT OFF)
+    set(DETECT_GATES_RENDERER_BUILD_PYTHON_DEFAULT OFF)
 endif()
-option(SEGMENT_GATE_RENDERER_BUILD_PYTHON "Build the Python bindings" ${SEGMENT_GATE_RENDERER_BUILD_PYTHON_DEFAULT})
+option(DETECT_GATES_RENDERER_BUILD_PYTHON "Build the Python bindings" ${DETECT_GATES_RENDERER_BUILD_PYTHON_DEFAULT})
 
 find_package(OpenCV REQUIRED COMPONENTS core imgproc calib3d imgcodecs)
 find_package(Eigen3 REQUIRED)
 find_package(yaml-cpp REQUIRED)
 
-add_library(segment_gate_renderer
+add_library(detect_gates_renderer
     src/transforms.cpp
     src/gates.cpp
     src/projection.cpp
@@ -34,56 +34,56 @@ add_library(segment_gate_renderer
     src/scene.cpp
     src/gate_renderer.cpp
 )
-add_library(segment_gate_renderer::segment_gate_renderer ALIAS segment_gate_renderer)
+add_library(detect_gates_renderer::detect_gates_renderer ALIAS detect_gates_renderer)
 
-target_include_directories(segment_gate_renderer PUBLIC
+target_include_directories(detect_gates_renderer PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(segment_gate_renderer PUBLIC
+target_link_libraries(detect_gates_renderer PUBLIC
     ${OpenCV_LIBS}
     Eigen3::Eigen
     yaml-cpp
 )
 
-target_compile_features(segment_gate_renderer PUBLIC cxx_std_17)
+target_compile_features(detect_gates_renderer PUBLIC cxx_std_17)
 
 include(GNUInstallDirs)
-install(TARGETS segment_gate_renderer
-    EXPORT segment_gate_rendererTargets
+install(TARGETS detect_gates_renderer
+    EXPORT detect_gates_rendererTargets
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-install(EXPORT segment_gate_rendererTargets
-    FILE segment_gate_rendererTargets.cmake
-    NAMESPACE segment_gate_renderer::
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/segment_gate_renderer
+install(EXPORT detect_gates_rendererTargets
+    FILE detect_gates_rendererTargets.cmake
+    NAMESPACE detect_gates_renderer::
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/detect_gates_renderer
 )
 
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/segment_gate_rendererConfig.cmake.in
-    ${CMAKE_CURRENT_BINARY_DIR}/segment_gate_rendererConfig.cmake
-    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/segment_gate_renderer
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/detect_gates_rendererConfig.cmake.in
+    ${CMAKE_CURRENT_BINARY_DIR}/detect_gates_rendererConfig.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/detect_gates_renderer
 )
 write_basic_package_version_file(
-    ${CMAKE_CURRENT_BINARY_DIR}/segment_gate_rendererConfigVersion.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/detect_gates_rendererConfigVersion.cmake
     VERSION ${PROJECT_VERSION}
     COMPATIBILITY SameMajorVersion
 )
 install(FILES
-    ${CMAKE_CURRENT_BINARY_DIR}/segment_gate_rendererConfig.cmake
-    ${CMAKE_CURRENT_BINARY_DIR}/segment_gate_rendererConfigVersion.cmake
-    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/segment_gate_renderer
+    ${CMAKE_CURRENT_BINARY_DIR}/detect_gates_rendererConfig.cmake
+    ${CMAKE_CURRENT_BINARY_DIR}/detect_gates_rendererConfigVersion.cmake
+    DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/detect_gates_renderer
 )
 
-if(SEGMENT_GATE_RENDERER_BUILD_EXAMPLES)
+if(DETECT_GATES_RENDERER_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-if(SEGMENT_GATE_RENDERER_BUILD_PYTHON)
+if(DETECT_GATES_RENDERER_BUILD_PYTHON)
     add_subdirectory(python)
 endif()

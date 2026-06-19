@@ -18,9 +18,9 @@
 
 #include <opencv2/core.hpp>
 
-#include "segment_gate/gates.hpp"
+#include "detect_gates/gates.hpp"
 
-namespace segment_gate {
+namespace detect_gates {
 
 // Project camera-frame points to pixel coordinates.
 //
@@ -57,4 +57,4 @@ cv::Mat rectifiedCameraMatrix(const cv::Mat& cameraMatrix, const cv::Mat& distCo
 // `r = f * tan(theta)` is unbounded as theta -> pi/2.
 double rectifiedThetaMax(const cv::Mat& newCameraMatrix, int imageWidth, int imageHeight);
 
-}  // namespace segment_gate
+}  // namespace detect_gates

@@ -1,8 +1,8 @@
-#include "segment_gate/gate_renderer.hpp"
+#include "detect_gates/gate_renderer.hpp"
 
-#include "segment_gate/projection.hpp"
+#include "detect_gates/projection.hpp"
 
-namespace segment_gate {
+namespace detect_gates {
 
 GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string& droneConfigPath,
                             const std::string& cameraConfigPath, bool rectified) {
@@ -33,4 +33,14 @@ cv::Mat GateRenderer::render(double x, double y, double z, double roll, double p
     return render(DronePose{x, y, z, roll, pitch, yaw});
 }
 
-}  // namespace segment_gate
+std::vector<GateDetection> GateRenderer::renderDetections(const DronePose& pose, int minVisibleCorners) const {
+    return detectGates(gates_, gateDims_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, imageWidth_, imageHeight_,
+                        fisheye_, thetaMax_, minVisibleCorners);
+}
+
+std::vector<GateDetection> GateRenderer::renderDetections(double x, double y, double z, double roll, double pitch,
+                                                           double yaw, int minVisibleCorners) const {
+    return renderDetections(DronePose{x, y, z, roll, pitch, yaw}, minVisibleCorners);
+}
+
+}  // namespace detect_gates

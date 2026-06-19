@@ -1,9 +1,9 @@
-#include "segment_gate/transforms.hpp"
+#include "detect_gates/transforms.hpp"
 
 #include <algorithm>
 #include <cmath>
 
-namespace segment_gate {
+namespace detect_gates {
 
 Eigen::Matrix3d rpyToMatrix(double roll, double pitch, double yaw) {
     const double cr = std::cos(roll), sr = std::sin(roll);
@@ -50,4 +50,4 @@ Transform invert(const Transform& t) {
     return Transform{rInv, -rInv * t.t};
 }
 
-}  // namespace segment_gate
+}  // namespace detect_gates

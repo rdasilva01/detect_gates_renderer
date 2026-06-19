@@ -6,9 +6,9 @@
 
 #include <opencv2/core.hpp>
 
-#include "segment_gate/scene.hpp"
+#include "detect_gates/scene.hpp"
 
-namespace segment_gate {
+namespace detect_gates {
 
 // Loads a gates layout, gate dimensions, and camera calibration once, then
 // renders segmentation masks for arbitrary drone poses without re-parsing
@@ -27,6 +27,12 @@ public:
     cv::Mat render(const DronePose& pose) const;
     cv::Mat render(double x, double y, double z, double roll, double pitch, double yaw) const;
 
+    // Detect per-gate keypoints/bounding boxes for a pose instead of a mask.
+    // See `detectGates()` in scene.hpp for the algorithm.
+    std::vector<GateDetection> renderDetections(const DronePose& pose, int minVisibleCorners = 3) const;
+    std::vector<GateDetection> renderDetections(double x, double y, double z, double roll, double pitch, double yaw,
+                                                 int minVisibleCorners = 3) const;
+
     int imageWidth() const { return imageWidth_; }
     int imageHeight() const { return imageHeight_; }
 
@@ -42,4 +48,4 @@ private:
     double thetaMax_ = 89.0 * CV_PI / 180.0;
 };
 
-}  // namespace segment_gate
+}  // namespace detect_gates

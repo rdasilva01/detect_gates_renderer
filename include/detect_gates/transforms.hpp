@@ -7,7 +7,7 @@
 
 #include <Eigen/Core>
 
-namespace segment_gate {
+namespace detect_gates {
 
 struct Transform {
     Eigen::Matrix3d R;
@@ -29,4 +29,4 @@ Transform compose(const Transform& t1, const Transform& t2);
 // Invert a transform.
 Transform invert(const Transform& t);
 
-}  // namespace segment_gate
+}  // namespace detect_gates

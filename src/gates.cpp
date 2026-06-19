@@ -1,8 +1,8 @@
-#include "segment_gate/gates.hpp"
+#include "detect_gates/gates.hpp"
 
 #include <cmath>
 
-namespace segment_gate {
+namespace detect_gates {
 
 namespace {
 
@@ -68,4 +68,4 @@ Polygon3d subdivideEdges(const Polygon3d& corners, int nSegments) {
     return points;
 }
 
-}  // namespace segment_gate
+}  // namespace detect_gates

@@ -5,7 +5,7 @@
 
 #include <Eigen/Core>
 
-namespace segment_gate {
+namespace detect_gates {
 
 // A closed polygon as an ordered list of 3D points.
 using Polygon3d = std::vector<Eigen::Vector3d>;
@@ -37,4 +37,4 @@ GateFaces gateFaces(double x, double y, double z, double yaw, double outerSize, 
 // follow the true curved projection.
 Polygon3d subdivideEdges(const Polygon3d& corners, int nSegments = 8);
 
-}  // namespace segment_gate
+}  // namespace detect_gates
