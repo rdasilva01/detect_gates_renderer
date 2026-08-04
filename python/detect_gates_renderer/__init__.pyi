@@ -29,8 +29,18 @@ class BoundingBox:
 
 class GateDetection:
     gate: str
+    # Spans the visible keypoints only: empty (inf, inf, -inf, -inf) for a gate
+    # that is fully occluded or has no corner in the frustum.
     bounding_box: BoundingBox
     keypoints: list[Keypoint]
+    # This gate's own silhouette, before other gates occlude it. Always the full
+    # image size; all zeros when the gate projects nowhere.
+    @property
+    def mask(self) -> npt.NDArray[np.uint8]: ...
+    # Bounding box of `mask`, following the fisheye-curved silhouette. Unlike
+    # `bounding_box` it stays correct when the edges bow outside the corners and
+    # when no corner is in the frustum.
+    mask_bounding_box: BoundingBox
 
 class GateRenderer:
     def __init__(self, gates_config_path: str, drone_config_path: str, camera_config_path: str,
