@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <Eigen/Geometry>
+#include <opencv2/imgproc.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "detect_gates/gates.hpp"
@@ -308,6 +309,20 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
             maxY = std::max(maxY, kp.y);
         }
         det.boundingBox = BoundingBox{minX, minY, maxX, maxY};
+
+        // Free: cv::Mat is refcounted, so this shares the buffer the occlusion
+        // test already built rather than rendering the gate a second time.
+        det.mask = cand.footprint;
+        const cv::Rect box = cv::boundingRect(cand.footprint);
+        det.maskBoundingBox =
+            box.empty() ? BoundingBox{std::numeric_limits<double>::infinity(),
+                                       std::numeric_limits<double>::infinity(),
+                                       -std::numeric_limits<double>::infinity(),
+                                       -std::numeric_limits<double>::infinity()}
+                        : BoundingBox{static_cast<double>(box.x), static_cast<double>(box.y),
+                                       static_cast<double>(box.x + box.width - 1),
+                                       static_cast<double>(box.y + box.height - 1)};
+
         detections.push_back(std::move(det));
     }
     return detections;

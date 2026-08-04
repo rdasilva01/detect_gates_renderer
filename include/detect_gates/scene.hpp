@@ -53,8 +53,34 @@ struct BoundingBox {
 
 struct GateDetection {
     std::string gate;  // source gate's config name (ground truth identity)
+    // Spans the VISIBLE keypoints only, so it is empty (inf, inf, -inf, -inf)
+    // for a gate that is fully occluded or has no corner in the frustum.
     BoundingBox boundingBox;
     std::vector<Keypoint> keypoints;  // 8: 4 *_inner + 4 *_outer, canonical order
+
+    // This gate's own silhouette, CV_8UC1 with 0/255 -- exactly what
+    // `renderPose` draws for this gate alone, before any other gate occludes
+    // it. Already computed to test occlusion against the true shape; kept here
+    // because two things cannot be recovered from the keypoints:
+    //
+    //   - a fisheye bows the gate's straight edges OUTSIDE the straight lines
+    //     joining its corners (which is why the faces are subdivided before
+    //     projection), so a box built from the 8 corners under-covers the real
+    //     silhouette;
+    //   - a gate can be close and off to one side such that every corner
+    //     leaves the `theta < thetaMax` cone while its frame still crosses the
+    //     image. It then has no usable keypoint at all, and the mask is the
+    //     only truthful description of it.
+    //
+    // Always allocated at the full image size; all zeros when the gate
+    // projects nowhere, which is the exact test for "this gate is not in the
+    // picture at all".
+    cv::Mat mask;
+
+    // Bounding box of `mask`, inclusive of both corners. Unlike `boundingBox`
+    // it follows the curved silhouette and stays meaningful with no visible
+    // corner. (inf, inf, -inf, -inf) when the mask has no set pixel.
+    BoundingBox maskBoundingBox;
 };
 
 // Load a gates_config.yaml's `gates_poses` map (name -> [x, y, z, yaw]).

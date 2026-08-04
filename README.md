@@ -69,9 +69,27 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // Optional 2nd arg: minVisibleCorners (default 3) -- gates with fewer than
 // this many visible keypoints (before or after cross-gate occlusion) are
 // omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
-// (x1,y1,x2,y2 over visible keypoints only), and 8 `keypoints`
-// (4 *_inner + 4 *_outer, each with name/x/y/visible).
+// (x1,y1,x2,y2 over visible keypoints only), 8 `keypoints`
+// (4 *_inner + 4 *_outer, each with name/x/y/visible), plus `mask` (this
+// gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
+
+`boundingBox` and `maskBoundingBox` are not the same box, and the difference
+matters:
+
+- `boundingBox` spans the **visible keypoints**, so it is empty
+  (`inf, inf, -inf, -inf`) for a gate that is fully occluded or has no corner in
+  the frustum.
+- `maskBoundingBox` is the box of the rendered silhouette. A fisheye bows a
+  gate's straight edges **outside** the straight lines joining its corners --
+  which is why the faces are subdivided before projection -- so a box built from
+  the corners under-covers the real shape, by over 150 px on a close gate at
+  820x616. Use this one for anything that has to contain the gate.
+
+`mask` is the same silhouette `render()` would draw for this gate alone, before
+other gates occlude it; OR-ing every detection's `mask` reproduces `render()`
+exactly. It costs nothing extra: it is the footprint the cross-gate occlusion
+test already builds.
 
 Pass `rectified = true` as the 4th constructor argument to render as seen by
 a rectified (pinhole) view of the fisheye camera instead of the raw fisheye
@@ -141,6 +159,10 @@ mask = renderer.render(pose)
 detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
 for d in detections:
     print(d.gate, d.bounding_box, [(k.name, k.x, k.y, k.visible) for k in d.keypoints])
+    # d.mask is this gate's own silhouette, a (height, width) uint8 array.
+    # d.mask_bounding_box is its box -- see the C++ note above on why it is not
+    # d.bounding_box.
+    print(d.mask_bounding_box, d.mask.sum() > 0)
 ```
 
 See `examples/python/detect_gates.py` for a runnable example (mirrors
