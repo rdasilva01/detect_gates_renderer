@@ -26,6 +26,25 @@ struct DronePose {
     double roll = 0.0, pitch = 0.0, yaw = 0.0;
 };
 
+// How a mask is resampled from the render resolution down to the output
+// resolution. Unused when `OutputSettings::nativeInter` is set.
+enum class InterMethod { Nearest, Linear, Area };
+
+// Output mask resolution, from config.yaml. Entirely optional: leave
+// `output_width`/`output_height` out and masks come out at the camera
+// calibration's resolution, exactly as before this existed.
+struct OutputSettings {
+    int width = 0;  // <= 0 means "whatever the camera calibration says"
+    int height = 0;
+    InterMethod interMethod = InterMethod::Area;
+    // Rasterize straight at the output resolution, with the intrinsics scaled
+    // to match, instead of rendering at the calibration resolution and
+    // resampling. Much faster, but a rasterizer only answers yes/no per pixel,
+    // so it cannot represent a gate frame thinner than one output pixel as
+    // anything but a whole one.
+    bool nativeInter = false;
+};
+
 struct CameraCalibration {
     int imageWidth = 0;
     int imageHeight = 0;
@@ -66,6 +85,11 @@ std::map<std::string, GatePose> loadGatesConfig(const std::string& path);
 
 // Load a config.yaml's `gate_dimensions` entry.
 GateDims loadGateDims(const std::string& path);
+
+// Load a config.yaml's optional `output_width`, `output_height`,
+// `inter_method` (nearest|linear|area) and `native_inter` entries.
+// Missing keys leave `OutputSettings`'s defaults in place.
+OutputSettings loadOutputSettings(const std::string& path);
 
 // Load a ROS2-style camera_calibration.yaml, unwrapping the `/**: ros__parameters` namespace.
 CameraCalibration loadCameraCalibration(const std::string& path);

@@ -140,6 +140,44 @@ GateDims loadGateDims(const std::string& path) {
                      dims["thickness"] ? dims["thickness"].as<double>() : 0.0};
 }
 
+OutputSettings loadOutputSettings(const std::string& path) {
+    const YAML::Node root = YAML::LoadFile(path);
+
+    OutputSettings output;
+
+    const bool hasWidth = static_cast<bool>(root["output_width"]);
+    const bool hasHeight = static_cast<bool>(root["output_height"]);
+    if (hasWidth != hasHeight) {
+        throw std::runtime_error("config: output_width and output_height must be set together");
+    }
+    if (hasWidth) {
+        output.width = root["output_width"].as<int>();
+        output.height = root["output_height"].as<int>();
+        if (output.width <= 0 || output.height <= 0) {
+            throw std::runtime_error("config: output_width and output_height must be positive");
+        }
+    }
+
+    if (root["inter_method"]) {
+        const std::string method = root["inter_method"].as<std::string>();
+        if (method == "nearest") {
+            output.interMethod = InterMethod::Nearest;
+        } else if (method == "linear") {
+            output.interMethod = InterMethod::Linear;
+        } else if (method == "area") {
+            output.interMethod = InterMethod::Area;
+        } else {
+            throw std::runtime_error("config: inter_method must be nearest, linear or area (got '" + method + "')");
+        }
+    }
+
+    if (root["native_inter"]) {
+        output.nativeInter = root["native_inter"].as<bool>();
+    }
+
+    return output;
+}
+
 CameraCalibration loadCameraCalibration(const std::string& path) {
     YAML::Node root = YAML::LoadFile(path);
     if (root["/**"]) {

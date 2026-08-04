@@ -82,6 +82,45 @@ The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
 available directly if you need more control (e.g. reloading a gate layout
 without re-reading the camera calibration).
 
+## Output resolution
+
+By default a mask comes out at the camera calibration's `image_width` /
+`image_height`. Four optional keys in `config.yaml` change that:
+
+| key | meaning |
+| --- | --- |
+| `output_width`, `output_height` | mask size handed back. Set together, or leave both out for the calibration resolution. |
+| `inter_method` | `nearest` \| `linear` \| `area` — how the mask is resampled down. Ignored when `native_inter` is true. |
+| `native_inter` | rasterize straight at the output resolution instead of rendering large and resampling. |
+
+Do **not** get this by editing `image_width`/`image_height` in the camera
+calibration: intrinsics are tied to the resolution, so shrinking the image
+without scaling `fx, fy, cx, cy` yields a small crop of the view rather than a
+downscaled one (at 64×64 that is an empty mask on ~95% of poses). The keys
+above scale the intrinsics for you, leaving the field of view untouched.
+
+`renderDetections()` keypoints and bounding boxes are returned in
+output-resolution pixels, so they always line up with `render()`'s mask.
+
+Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
+
+- `area` (the default) makes the mask **soft**: each output pixel carries the
+  fraction of itself covered by gate, so a frame thinner than one output pixel
+  survives as a partial value instead of being hit or missed at random.
+  Threshold it yourself if your loss needs hard labels. `nearest` stays binary
+  but point-samples one pixel per block and breaks thin frames into dots
+  (measured over 54 poses at 0.3–26 m: IoU 0.55 against true coverage, vs 0.71
+  for `area`).
+- `native_inter: true` is ~18× faster (0.25 vs 4.45 ms/frame at 64×64) and
+  worth it for very large datasets, but a rasterizer only answers yes/no per
+  pixel: sub-pixel frames get rounded up to a whole one (~+15% mask area at
+  64×64) and a soft mask is not possible.
+
+The aspect ratio is not preserved for you — 820×616 → 64×64 squashes
+horizontally (12.8×) more than vertically (9.6×). That is fine provided the
+real camera images are resized identically; if you letterbox or crop those, do
+the same to the mask.
+
 ## Example
 
 ```sh
@@ -163,10 +202,16 @@ python examples/python/visualize_detections.py --output overlay.png
 equivalent): it renders continuously in a window (with an FPS counter) and
 lets you fly around in the drone's body frame with the keyboard (arrows =
 forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
-Tab = toggle the pose-detection overlay on/off, Space = toggle rectified
-vs. raw fisheye view, Esc = quit). Requires a
+Tab = toggle the pose-detection overlay on/off, `1` = toggle the FPS readout,
+`2` = toggle the full-resolution mask vs. the configured output size,
+Space = toggle rectified vs. raw fisheye view, Esc = quit). Requires a
 GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 
 ```sh
 python examples/python/live_view.py
 ```
+
+Masks smaller than `--display-size` (default 820x616) are upscaled
+nearest-neighbour for viewing, so a renderer configured for 64x64 output still
+gives a readable window — the overlay and text are drawn at full size over the
+mask's real pixel grid. This affects the preview only.
