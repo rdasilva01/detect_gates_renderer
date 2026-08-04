@@ -30,7 +30,14 @@ GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string
         }
         distCoeffs_ = cv::Mat::zeros(4, 1, CV_64F);
         thetaMax_ = rectifiedThetaMax(cameraMatrix_, imageWidth_, imageHeight_);
-    } else if (!fisheye_) {
+    } else if (fisheye_) {
+        // Raw fisheye render: this is the camera's true angular extent, not a
+        // clipping cone, and for a >180 deg lens it exceeds 90 deg (105.8 deg
+        // for the calibration in config/). Leaving it at the old 89 deg default
+        // discarded the outermost ring of the image, which is precisely where
+        // a gate sits while the drone is crossing it and just after.
+        thetaMax_ = fisheyeThetaMax(cameraMatrix_, distCoeffs_, imageWidth_, imageHeight_);
+    } else {
         // Native pinhole source, raw (still-distorted) render: the default
         // thetaMax_ (89 deg) assumes nothing about this camera's actual FOV;
         // derive the real clipping cone from its camera matrix + resolution.

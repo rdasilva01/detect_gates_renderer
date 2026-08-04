@@ -1,19 +1,21 @@
 // Render a gate-segmentation mask onto a grayscale canvas.
 #pragma once
 
-#include <optional>
 #include <vector>
 
 #include <opencv2/core.hpp>
 
-namespace detect_gates {
+#include "detect_gates/projection.hpp"
 
-// A projected face polygon, or std::nullopt if it was clipped out entirely.
-using FacePixels = std::optional<std::vector<cv::Point2d>>;
+namespace detect_gates {
 
 struct GateFacesPx {
     std::vector<FacePixels> outerFacesPx;
     std::vector<FacePixels> innerFacesPx;
+    // True while the camera is inside this gate's through-hole, i.e. between
+    // its two apertures and laterally within them. Changes how the hole is
+    // combined from the two inner faces -- see `singleGateMask`.
+    bool cameraInAperture = false;
 };
 
 // Render a single gate's silhouette mask: outer faces OR-ed together minus

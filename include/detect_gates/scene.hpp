@@ -45,10 +45,9 @@ struct Keypoint {
     double x = 0.0, y = 0.0;
     bool visible = false;
     // True if this corner is within the camera's field of view at all (the
-    // `theta < thetaMax` cone and the image bounds), regardless of
-    // occlusion. When false, (x, y) is not a meaningful pixel location --
-    // the fisheye projection formula is only well-defined inside that cone,
-    // so a corner outside it can project to an arbitrary, unrelated pixel.
+    // `theta < thetaMax` cone and the image bounds), regardless of occlusion.
+    // When false, (x, y) is a real pixel location the corner would occupy on
+    // an unbounded sensor, but one the camera cannot see.
     bool inFrustum = false;
 };
 
@@ -70,6 +69,14 @@ GateDims loadGateDims(const std::string& path);
 
 // Load a ROS2-style camera_calibration.yaml, unwrapping the `/**: ros__parameters` namespace.
 CameraCalibration loadCameraCalibration(const std::string& path);
+
+// `thetaMax` below is the camera's angular extent: the FOV clipping cone for
+// the pinhole model, and for the fisheye model the bound on which corners
+// count as visible. The 89 deg default suits neither camera in particular --
+// pass `fisheyeThetaMax` / `rectifiedThetaMax` (projection.hpp) for the real
+// value, as `GateRenderer` does. It matters most for a >180 deg fisheye, where
+// the true extent is past 90 deg and the default would discard the outer ring
+// of the image.
 
 // Render the segmentation mask seen from `dronePos`.
 cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
