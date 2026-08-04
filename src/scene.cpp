@@ -119,6 +119,11 @@ struct Candidate {
 
 }  // namespace
 
+DronePose poseFromQuaternion(double x, double y, double z, double qw, double qx, double qy, double qz) {
+    const Eigen::Vector3d rpy = matrixToRpy(quaternionToMatrix(qw, qx, qy, qz));
+    return DronePose{x, y, z, rpy.x(), rpy.y(), rpy.z()};
+}
+
 std::map<std::string, GatePose> loadGatesConfig(const std::string& path) {
     const YAML::Node root = YAML::LoadFile(path);
     const YAML::Node posesNode = root["gates_poses"];

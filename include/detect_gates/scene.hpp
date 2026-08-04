@@ -26,6 +26,21 @@ struct DronePose {
     double roll = 0.0, pitch = 0.0, yaw = 0.0;
 };
 
+// Build a DronePose from a position and an orientation quaternion, scalar
+// first: (w, x, y, z). Frames are REP-103 as everywhere else here -- world ENU
+// (x east, y north, z up), body FLU (x forward, y left, z up) -- so this is a
+// pure change of parameterization and the result renders identically to the
+// equivalent roll/pitch/yaw.
+//
+// Note ROS's geometry_msgs/Quaternion orders its *fields* x, y, z, w; this
+// takes w first. The quaternion need not be normalized.
+//
+// The rotation is decomposed back into roll/pitch/yaw, which is exact to
+// ~3e-14 rad, degrading to ~7e-8 rad only when the pitch is within a
+// micro-radian of straight up or down. Both are far below one pixel at any
+// range this renders.
+DronePose poseFromQuaternion(double x, double y, double z, double qw, double qx, double qy, double qz);
+
 // How a mask is resampled from the render resolution down to the output
 // resolution. Unused when `OutputSettings::nativeInter` is set.
 enum class InterMethod { Nearest, Linear, Area };

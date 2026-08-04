@@ -73,6 +73,28 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // (4 *_inner + 4 *_outer, each with name/x/y/visible).
 ```
 
+Poses can be given as a quaternion instead of roll/pitch/yaw. Frames are
+REP-103 throughout — world ENU (x east, y north, z up), body FLU (x forward,
+y left, z up) — so this is only a change of parameterization:
+
+```cpp
+detect_gates::DronePose pose =
+    detect_gates::poseFromQuaternion(x, y, z, qw, qx, qy, qz);
+cv::Mat mask = renderer.render(pose);            // and renderDetections(pose)
+```
+
+```python
+pose = DronePose.from_quaternion(x, y, z, qw, qx, qy, qz)
+mask = renderer.render(pose)
+```
+
+The quaternion is **scalar first, `(w, x, y, z)`** — note that ROS's
+`geometry_msgs/Quaternion` orders its *fields* `x, y, z, w`. It need not be
+normalized. Two conventions worth stating, since both are easy to get backwards:
+yaw is zero pointing **east** and increases counter-clockwise, and because the
+body y-axis points *left*, positive pitch is **nose down** (the opposite of the
+NED/FRD aerospace convention).
+
 Pass `rectified = true` as the 4th constructor argument to render as seen by
 a rectified (pinhole) view of the fisheye camera instead of the raw fisheye
 projection (applies to both `render()` and `renderDetections()`).

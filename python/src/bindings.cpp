@@ -43,6 +43,11 @@ NB_MODULE(_detect_gates_renderer, m) {
         .def_rw("roll", &DronePose::roll)
         .def_rw("pitch", &DronePose::pitch)
         .def_rw("yaw", &DronePose::yaw)
+        .def_static("from_quaternion", &poseFromQuaternion, "x"_a, "y"_a, "z"_a, "qw"_a, "qx"_a, "qy"_a, "qz"_a,
+                    "Build a DronePose from a position and an ENU/FLU orientation quaternion, scalar "
+                    "first: (qw, qx, qy, qz). Note ROS's geometry_msgs/Quaternion orders its fields "
+                    "x, y, z, w. The quaternion need not be normalized. The result is interchangeable "
+                    "with a roll/pitch/yaw DronePose and renders identically.")
         .def("__repr__", [](const DronePose& p) {
             return "DronePose(x=" + std::to_string(p.x) + ", y=" + std::to_string(p.y) +
                    ", z=" + std::to_string(p.z) + ", roll=" + std::to_string(p.roll) +

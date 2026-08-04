@@ -13,6 +13,9 @@ class DronePose:
 
     def __init__(self, x: float = ..., y: float = ..., z: float = ..., roll: float = ..., pitch: float = ...,
                  yaw: float = ...) -> None: ...
+    @staticmethod
+    def from_quaternion(x: float, y: float, z: float, qw: float, qx: float, qy: float,
+                        qz: float) -> DronePose: ...
 
 class Keypoint:
     name: str
