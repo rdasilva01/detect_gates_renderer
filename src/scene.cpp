@@ -104,6 +104,10 @@ CameraCalibration loadCameraCalibration(const std::string& path) {
     calib.imageHeight = root["image_height"].as<int>();
     calib.cameraMatrix = matFromYamlData(root["camera_matrix"], 3, 3);
     calib.distCoeffs = matFromYamlData(root["distortion_coefficients"], 4, 1);
+    if (root["distortion_model"]) {
+        const std::string model = root["distortion_model"].as<std::string>();
+        calib.fisheye = (model == "fisheye" || model == "equidistant");
+    }
 
     const YAML::Node& tf = root["camera_transform"];
     calib.tBaseCam = poseToTransform(tf["x"].as<double>(), tf["y"].as<double>(), tf["z"].as<double>(),

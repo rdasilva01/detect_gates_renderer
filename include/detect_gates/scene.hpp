@@ -33,6 +33,11 @@ struct CameraCalibration {
     cv::Mat distCoeffs;
     // Transform from the camera frame to the drone base frame.
     Transform tBaseCam;
+    // Parsed from `distortion_model` ("fisheye"/"equidistant" -> true,
+    // anything else, e.g. "radtan"/"plumb_bob" -> false). Defaults to true
+    // (missing field) to match every calibration this library shipped with
+    // before this field existed.
+    bool fisheye = true;
 };
 
 struct Keypoint {

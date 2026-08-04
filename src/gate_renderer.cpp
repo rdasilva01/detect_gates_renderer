@@ -15,12 +15,26 @@ GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string
     imageHeight_ = calib.imageHeight;
     cameraMatrix_ = calib.cameraMatrix;
     distCoeffs_ = calib.distCoeffs;
+    fisheye_ = calib.fisheye;
 
+    // `rectified` means "give me the undistorted view of this camera". For a
+    // fisheye source that means deriving a new pinhole camera matrix (the
+    // original behavior). For a calibration that's already pinhole (e.g.
+    // radtan/plumb_bob), the camera matrix is already the right one to use --
+    // "undistorted" just means dropping the (already-loaded) distortion
+    // coefficients, keeping resolution/intrinsics/extrinsics unchanged.
     if (rectified) {
-        cameraMatrix_ = rectifiedCameraMatrix(cameraMatrix_, distCoeffs_, imageWidth_, imageHeight_);
+        if (fisheye_) {
+            cameraMatrix_ = rectifiedCameraMatrix(cameraMatrix_, distCoeffs_, imageWidth_, imageHeight_);
+            fisheye_ = false;
+        }
         distCoeffs_ = cv::Mat::zeros(4, 1, CV_64F);
         thetaMax_ = rectifiedThetaMax(cameraMatrix_, imageWidth_, imageHeight_);
-        fisheye_ = false;
+    } else if (!fisheye_) {
+        // Native pinhole source, raw (still-distorted) render: the default
+        // thetaMax_ (89 deg) assumes nothing about this camera's actual FOV;
+        // derive the real clipping cone from its camera matrix + resolution.
+        thetaMax_ = rectifiedThetaMax(cameraMatrix_, imageWidth_, imageHeight_);
     }
 }
 

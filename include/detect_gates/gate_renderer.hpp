@@ -18,9 +18,13 @@ public:
     // `droneConfigPath` only needs to provide `gate_dimensions`; each
     // `render()` call supplies its own pose.
     //
-    // If `rectified` is true, masks are rendered as seen by a rectified
-    // (pinhole) view of the fisheye camera (matching the `-r` example flag)
-    // instead of the raw fisheye projection.
+    // `cameraConfigPath`'s `distortion_model` field ("fisheye"/"equidistant"
+    // vs. anything else, e.g. "radtan"/"plumb_bob") selects the projection
+    // model. If `rectified` is true, masks are rendered undistorted: for a
+    // fisheye source that means a rectified (pinhole) view derived from it
+    // (matching the `-r` example flag); for an already-pinhole source it
+    // means the same camera matrix with distortion coefficients dropped.
+
     GateRenderer(const std::string& gatesConfigPath, const std::string& droneConfigPath,
                  const std::string& cameraConfigPath, bool rectified = false);
 
