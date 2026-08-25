@@ -3,6 +3,7 @@
 
 #include <map>
 #include <string>
+#include <vector>
 
 #include <opencv2/core.hpp>
 
@@ -36,6 +37,34 @@ public:
     // partial value. Threshold it yourself if you need hard labels.
     cv::Mat render(const DronePose& pose) const;
     cv::Mat render(double x, double y, double z, double roll, double pitch, double yaw) const;
+
+    // Semantic coverage and instance labels for one pose, together.
+    //
+    // `.coverage` is byte-for-byte what `render()` returns. `.instances` is 0
+    // for background and otherwise the gate's 1-based index into `gateNames()`,
+    // with the nearer gate owning any overlap.
+    //
+    // **The two are resampled by different rules and must be.** Coverage is a
+    // measure and blends: `inter_method: area` is what turns a frame thinner
+    // than an output pixel into a partial value, and that softness is the
+    // point. A label is an identity and cannot blend -- averaging gate 3 and
+    // gate 7 gives gate 5, a gate that is not there -- so instances always
+    // resample nearest-neighbour regardless of `inter_method`.
+    struct Segmentation {
+        cv::Mat coverage;
+        cv::Mat instances;
+    };
+    //
+    // `instances > 0` holds exactly where `coverage > 0`: unowned coverage takes
+    // the largest adjacent label and a label with no coverage under it is
+    // dropped, so a consumer never meets a covered pixel it cannot attribute.
+    Segmentation renderSegmented(const DronePose& pose) const;
+    Segmentation renderSegmented(double x, double y, double z, double roll, double pitch, double yaw) const;
+
+    // Gate names in label order, so `instances == i + 1` is `gateNames()[i]`.
+    // Config order is alphabetical (the gates live in a std::map), which need
+    // not be track order -- the caller maps names, never indices.
+    std::vector<std::string> gateNames() const;
 
     // Detect per-gate keypoints/bounding boxes for a pose instead of a mask.
     // See `detectGates()` in scene.hpp for the algorithm. Coordinates are in

@@ -99,6 +99,30 @@ NB_MODULE(_detect_gates_renderer, m) {
             },
             "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a)
         .def(
+            "render_segmented",
+            [](const GateRenderer& self, const DronePose& pose) {
+                const GateRenderer::Segmentation seg = self.renderSegmented(pose);
+                return nb::make_tuple(matToNdarray(seg.coverage), matToNdarray(seg.instances));
+            },
+            "pose"_a,
+            "Semantic coverage and instance labels for a DronePose, as a "
+            "(coverage, instances) pair of (height, width) uint8 arrays.\n\n"
+            "`coverage` is exactly what render() returns -- soft, because area "
+            "resampling blends a thin frame into a partial value. `instances` is "
+            "0 for background and otherwise the gate's 1-based index into "
+            "gate_names, with the nearer gate owning any overlap; it is always "
+            "resampled nearest-neighbour, because averaging label 3 and label 7 "
+            "would produce label 5, a gate that is not there.")
+        .def(
+            "render_segmented",
+            [](const GateRenderer& self, double x, double y, double z, double roll, double pitch, double yaw) {
+                const GateRenderer::Segmentation seg = self.renderSegmented(x, y, z, roll, pitch, yaw);
+                return nb::make_tuple(matToNdarray(seg.coverage), matToNdarray(seg.instances));
+            },
+            "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a)
+        .def_prop_ro("gate_names", &GateRenderer::gateNames,
+                     "Gate names in label order: `instances == i + 1` is `gate_names[i]`.")
+        .def(
             "render_detections",
             [](const GateRenderer& self, const DronePose& pose, int minVisibleCorners) {
                 return self.renderDetections(pose, minVisibleCorners);

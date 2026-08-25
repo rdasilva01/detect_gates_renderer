@@ -118,6 +118,20 @@ cv::Mat singleGateMask(const GateFacesPx& gate, int imageWidth, int imageHeight)
     return gateMask;
 }
 
+cv::Mat renderInstances(const std::vector<GateFacesPx>& gatesPx, const std::vector<uint8_t>& labels,
+                         int imageWidth, int imageHeight) {
+    cv::Mat canvas = cv::Mat::zeros(imageHeight, imageWidth, CV_8UC1);
+    const size_t count = std::min(gatesPx.size(), labels.size());
+    for (size_t i = 0; i < count; ++i) {
+        // The same silhouette `renderSegmentation` would OR in, so the instance
+        // mask agrees with the semantic one pixel for pixel by construction --
+        // including the coverage guard that suppresses an implausible gate.
+        const cv::Mat footprint = singleGateMask(gatesPx[i], imageWidth, imageHeight);
+        canvas.setTo(cv::Scalar(labels[i]), footprint);
+    }
+    return canvas;
+}
+
 cv::Mat renderSegmentation(const std::vector<GateFacesPx>& gatesPx, int imageWidth, int imageHeight) {
     cv::Mat canvas = cv::Mat::zeros(imageHeight, imageWidth, CV_8UC1);
 

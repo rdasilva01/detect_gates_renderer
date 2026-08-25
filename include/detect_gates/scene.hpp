@@ -123,6 +123,19 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
                     const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
                     double thetaMax = 89.0 * CV_PI / 180.0);
 
+// Render the INSTANCE mask seen from `dronePos`: 0 for background, otherwise
+// the gate's 1-based position in `gates` iteration order (i.e. sorted by gate
+// name, which is what `gateNames()` returns). Pixel-for-pixel consistent with
+// `renderPose`, because both rasterize the same per-gate silhouettes.
+//
+// Where two gates overlap the nearer one owns the pixel, resolved by mean
+// camera-frame depth of the gate centre. `renderPose` needs no such rule: it
+// OR-s, and OR does not care who contributed.
+cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
+                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
+                             double thetaMax = 89.0 * CV_PI / 180.0);
+
 // Detect per-gate keypoints (4 inner + 4 outer corners) and bounding boxes
 // as seen from `dronePos`, with cross-gate occlusion handling. Gates with
 // fewer than `minVisibleCorners` visible keypoints (before or after

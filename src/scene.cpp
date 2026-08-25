@@ -247,6 +247,73 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
     return renderSegmentation(gatesPx, imageWidth, imageHeight);
 }
 
+cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
+                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                             double thetaMax) {
+    const Transform tWorldBase =
+        poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
+    const Transform tWorldCam = compose(tWorldBase, tBaseCam);
+    const Transform tCamWorld = invert(tWorldCam);
+
+    auto projectFace = [&](const Polygon3d& faceWorld) -> FacePixels {
+        return projectFaceClipped(faceWorld, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                   imageHeight);
+    };
+
+    struct Painted {
+        GateFacesPx px;
+        uint8_t label = 0;
+        double depth = 0.0;
+    };
+    std::vector<Painted> painted;
+    uint8_t label = 0;
+    for (const auto& [name, gatePose] : gates) {
+        // Incremented for EVERY gate, including ones that fall off canvas, so a
+        // label means the same gate whatever happens to be in view. A label
+        // that shifted with visibility would silently rename gates between
+        // frames, which is precisely the identity this exists to provide.
+        ++label;
+        const GateFaces faces =
+            gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize, gateDims.innerSize,
+                      gateDims.thickness);
+
+        GateFacesPx gatePx;
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, tWorldCam.t);
+        gatePx.outerFacesPx.reserve(faces.outerFaces.size());
+        for (const auto& face : faces.outerFaces) {
+            gatePx.outerFacesPx.push_back(projectFace(face));
+        }
+
+        if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
+            continue;
+        }
+
+        gatePx.innerFacesPx.reserve(faces.innerFaces.size());
+        for (const auto& face : faces.innerFaces) {
+            gatePx.innerFacesPx.push_back(projectFace(face));
+        }
+
+        const Eigen::Vector3d centreCam =
+            tCamWorld.R * Eigen::Vector3d(gatePose.x, gatePose.y, gatePose.z) + tCamWorld.t;
+        painted.push_back(Painted{std::move(gatePx), label, centreCam.z()});
+    }
+
+    // Far to near, so the nearer gate is painted last and owns the overlap.
+    std::sort(painted.begin(), painted.end(),
+              [](const Painted& a, const Painted& b) { return a.depth > b.depth; });
+
+    std::vector<GateFacesPx> gatesPx;
+    std::vector<uint8_t> labels;
+    gatesPx.reserve(painted.size());
+    labels.reserve(painted.size());
+    for (auto& entry : painted) {
+        gatesPx.push_back(std::move(entry.px));
+        labels.push_back(entry.label);
+    }
+    return renderInstances(gatesPx, labels, imageWidth, imageHeight);
+}
+
 std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
                                         const DronePose& dronePos, const Transform& tBaseCam,
                                         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,

@@ -199,6 +199,17 @@ pose = DronePose(x=19.0, y=2.0, z=0.155, roll=0.0, pitch=0.0, yaw=3.13)
 mask = renderer.render(pose)
 # `mask` is a (height, width) uint8 numpy array. `renderer.render(x, y, z, roll, pitch, yaw)` also works.
 
+coverage, instances = renderer.render_segmented(pose)
+# Semantic and instance segmentation for the same pose.
+#   `coverage`  is byte-for-byte what `render()` returns: soft, because `inter_method: area`
+#               blends a frame thinner than an output pixel into a partial value.
+#   `instances` is 0 for background and otherwise the gate's 1-based index into
+#               `renderer.gate_names`, the nearer gate owning any overlap.
+# `instances > 0` exactly where `coverage > 0`, so every covered pixel has an owner.
+# A label is an identity and cannot be blended -- averaging gate 3 and gate 7 would give
+# gate 5 -- so instances are resampled by area-per-label and argmax, never by averaging.
+print(renderer.gate_names[instances[instances > 0][0] - 1])
+
 detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
 for d in detections:
     print(d.gate, d.bounding_box, [(k.name, k.x, k.y, k.visible) for k in d.keypoints])
