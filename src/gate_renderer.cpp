@@ -137,6 +137,13 @@ std::vector<cv::Mat> GateRenderer::render(const std::vector<DronePose>& poses) c
     // Thread count is left to the runtime and therefore to `OMP_NUM_THREADS`.
     // That is deliberate: this library does not know what else is on the machine,
     // and a caller sharing the host with a training job wants to say so.
+    //
+    // **More threads is not better, and past a point it is much worse.** Measured
+    // idle on a 24-core host, speedup over the serial loop at 32 poses: 3.69x with
+    // 8 threads, 3.47x with 16, 2.16x with 24. A mask costs about a millisecond, so
+    // beyond a handful of threads the dispatch and the memory traffic over the
+    // full-resolution canvases cost more than the work being handed out. Eight is a
+    // good default; every core is a pessimisation.
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 1) if (count > 1)
 #endif
