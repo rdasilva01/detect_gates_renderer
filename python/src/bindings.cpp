@@ -4,6 +4,8 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <cstring>
+
 #include <opencv2/core.hpp>
 
 #include "detect_gates/gate_renderer.hpp"
@@ -26,6 +28,32 @@ nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1>> matToNdarray(const cv::Mat& m
     nb::capsule owner_capsule(owner, [](void* p) noexcept { delete static_cast<cv::Mat*>(p); });
     return nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1>>(
         owner->data, {static_cast<size_t>(owner->rows), static_cast<size_t>(owner->cols)}, owner_capsule);
+}
+
+// Copy N equally-sized CV_8UC1 masks into one contiguous (N, H, W) numpy array.
+//
+// One allocation and one owner rather than N of each: the caller wants a batch,
+// and handing back a list of N zero-copy views would leave N cv::Mat capsules
+// alive and force the consumer to stack them anyway. The copy is 4 KB a mask at
+// the 64x64 the models use -- far below the render it just paid for.
+nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1, -1>> matsToNdarray(const std::vector<cv::Mat>& masks) {
+    const size_t count = masks.size();
+    const size_t rows = count ? static_cast<size_t>(masks[0].rows) : 0;
+    const size_t cols = count ? static_cast<size_t>(masks[0].cols) : 0;
+    auto* buffer = new std::vector<uint8_t>(count * rows * cols);
+    for (size_t i = 0; i < count; ++i) {
+        if (masks[i].type() != CV_8UC1 || !masks[i].isContinuous()) {
+            delete buffer;
+            throw std::runtime_error("expected continuous CV_8UC1 masks");
+        }
+        if (static_cast<size_t>(masks[i].rows) != rows || static_cast<size_t>(masks[i].cols) != cols) {
+            delete buffer;
+            throw std::runtime_error("batched masks must all be the same size");
+        }
+        std::memcpy(buffer->data() + i * rows * cols, masks[i].data, rows * cols);
+    }
+    nb::capsule owner(buffer, [](void* p) noexcept { delete static_cast<std::vector<uint8_t>*>(p); });
+    return nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1, -1>>(buffer->data(), {count, rows, cols}, owner);
 }
 
 }  // namespace
@@ -92,6 +120,17 @@ NB_MODULE(_detect_gates_renderer, m) {
         .def(
             "render", [](const GateRenderer& self, const DronePose& pose) { return matToNdarray(self.render(pose)); },
             "pose"_a, "Render the segmentation mask for a DronePose, as a (height, width) uint8 numpy array.")
+        .def(
+            "render_batch",
+            [](const GateRenderer& self, const std::vector<DronePose>& poses) {
+                return matsToNdarray(self.render(poses));
+            },
+            "poses"_a,
+            "Render many poses at once, as an (n, height, width) uint8 numpy array.\n\n"
+            "Byte-for-byte what a Python loop over render() gives, parallelised over poses\n"
+            "across cores. Only usable when the poses are known up front -- offline dataset\n"
+            "rendering or a vectorised simulator, not a single-drone loop where the next\n"
+            "pose depends on the current mask.")
         .def(
             "render",
             [](const GateRenderer& self, double x, double y, double z, double roll, double pitch, double yaw) {

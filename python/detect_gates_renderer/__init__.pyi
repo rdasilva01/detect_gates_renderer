@@ -1,4 +1,4 @@
-from typing import overload
+from typing import overload, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -43,6 +43,7 @@ class GateRenderer:
     @overload
     def render(self, x: float, y: float, z: float, roll: float, pitch: float,
                yaw: float) -> npt.NDArray[np.uint8]: ...
+    def render_batch(self, poses: Sequence[DronePose]) -> npt.NDArray[np.uint8]: ...
     @overload
     def render_segmented(self, pose: DronePose) -> tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]]: ...
     @overload

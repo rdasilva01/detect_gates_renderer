@@ -38,6 +38,25 @@ public:
     cv::Mat render(const DronePose& pose) const;
     cv::Mat render(double x, double y, double z, double roll, double pitch, double yaw) const;
 
+    // Render many poses in one call, `out[i]` for `poses[i]`.
+    //
+    // Byte-for-byte what a loop over the single-pose `render()` produces -- it
+    // *is* that loop, parallelised over poses with OpenMP when the library was
+    // built with it, and a plain serial loop when it was not. Nothing about the
+    // rasterizer changes, which is the point: masks are a contract here, and a
+    // batched path that re-derived them would have to be re-validated pixel by
+    // pixel rather than argued about.
+    //
+    // Worth calling only when the poses are known up front -- offline dataset
+    // rendering, or a vectorised simulator stepping N drones at once. A live
+    // single-drone loop cannot use it: the next pose does not exist until the
+    // current mask has been acted on.
+    //
+    // Scaling is by core count and stops there. OpenCV's own parallelism is
+    // suppressed for the duration, since nesting it inside this loop
+    // oversubscribes the cores and can come out slower than serial.
+    std::vector<cv::Mat> render(const std::vector<DronePose>& poses) const;
+
     // Semantic coverage and instance labels for one pose, together.
     //
     // `.coverage` is byte-for-byte what `render()` returns. `.instances` is 0
