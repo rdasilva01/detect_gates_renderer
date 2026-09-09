@@ -110,9 +110,15 @@ struct GateDetection {
     //     image. It then has no usable keypoint at all, and the mask is the
     //     only truthful description of it.
     //
-    // Always allocated at the full image size; all zeros when the gate
-    // projects nowhere, which is the exact test for "this gate is not in the
-    // picture at all".
+    // `detectGates` leaves this at the render resolution it was given.
+    // `GateRenderer::renderDetections` then resamples it to the configured
+    // output size, so every field of a detection handed back by GateRenderer
+    // -- keypoints, boundingBox, mask, maskBoundingBox -- indexes the same
+    // grid as `GateRenderer::render()`.
+    //
+    // All zeros when the gate projects nowhere. At `minVisibleCorners == 0`
+    // such gates are dropped rather than returned, so a detection you get back
+    // from that setting always has something in its mask.
     cv::Mat mask;
 
     // Bounding box of `mask`, inclusive of both corners. Unlike `boundingBox`
@@ -120,6 +126,15 @@ struct GateDetection {
     // corner. (inf, inf, -inf, -inf) when the mask has no set pixel.
     BoundingBox maskBoundingBox;
 };
+
+// Bounding box of a CV_8UC1 mask's set pixels, INCLUSIVE of both corners --
+// (x1, y1) and (x2, y2) are themselves set, so a single lit pixel gives
+// x1 == x2. Note this differs from `GateDetection::boundingBox`, which is a
+// continuous min/max over projected keypoint coordinates rather than a pixel
+// index; a mask has no sub-pixel corners to span.
+// (inf, inf, -inf, -inf) when no pixel is set, matching `boundingBox`'s
+// convention for "nothing to describe".
+BoundingBox boundingBoxOfMask(const cv::Mat& mask);
 
 // Load a gates_config.yaml's `gates_poses` map (name -> [x, y, z, yaw]).
 std::map<std::string, GatePose> loadGatesConfig(const std::string& path);

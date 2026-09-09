@@ -1,5 +1,6 @@
 #include "detect_gates/gate_renderer.hpp"
 
+#include <algorithm>
 #include <vector>
 
 #include <opencv2/imgproc.hpp>
@@ -277,6 +278,48 @@ std::vector<GateDetection> GateRenderer::renderDetections(const DronePose& pose,
         detection.boundingBox.x2 *= scaleX;
         detection.boundingBox.y1 *= scaleY;
         detection.boundingBox.y2 *= scaleY;
+
+        // The mask moves too, and by resampling rather than scaling: it is an
+        // image, not a coordinate. Same interpolation as `render()`, so a
+        // detection's mask is the same pixels `render()` would give for this
+        // gate alone -- leaving it at render resolution would put two
+        // coordinate systems in one struct, with `keypoints` indexing a grid
+        // 12.8x smaller than the mask beside them.
+        //
+        // This is also what keeps the field affordable to hold on to. At
+        // 820x616 a mask is 505 KB and a pose's worth is megabytes; at the
+        // 64x64 the models use it is 4 KB.
+        //
+        // What it costs is entirely `inter_method`'s doing, 820x616 -> 64x64
+        // per gate: 2.8 us nearest, 8.5 us linear, 667 us area. Only `area`
+        // is worth thinking about -- it lands around 3.8 ms on a 5.7-gate
+        // pose against `renderDetections`' own ~2 ms -- and it is the library
+        // default, though the config in this repo sets nearest.
+        //
+        // Resize the whole image, not a crop around the silhouette: 820/64 is
+        // 12.8125, so a crop does not land on the resample grid and shifts the
+        // mask by up to a pixel (measured: 1.3% of pixels differ, by up to the
+        // full 0-255 range).
+        if (!detection.mask.empty()) {
+            cv::Mat resized;
+            cv::resize(detection.mask, resized, cv::Size(outputWidth_, outputHeight_), 0, 0,
+                        toCvInterpolation(interMethod_));
+            detection.mask = resized;
+            detection.maskBoundingBox = boundingBoxOfMask(detection.mask);
+        }
+    }
+
+    // `detectGates` already dropped the gates that project nowhere, but it
+    // judged that at the render resolution. A silhouette a couple of pixels
+    // across at 820x616 can resample to nothing at all at 64x64, and the
+    // caller who asked for "everything in the picture" means the picture they
+    // are actually getting. So re-apply the test on the resampled mask.
+    if (minVisibleCorners == 0) {
+        detections.erase(std::remove_if(detections.begin(), detections.end(),
+                                         [](const GateDetection& d) {
+                                             return d.maskBoundingBox.x2 < d.maskBoundingBox.x1;
+                                         }),
+                          detections.end());
     }
     return detections;
 }

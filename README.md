@@ -74,12 +74,24 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
 
+Pass `minVisibleCorners = 0` for **everything in the picture** rather than
+everything with enough corners. This is the setting the mask exists for: a gate
+can sit close and off to one side so that every corner leaves the fisheye's
+`theta < thetaMax` cone while its frame still crosses the image, and such a gate
+is dropped at any threshold above 0 — its `boundingBox` is empty and all eight
+keypoints are `inFrustum = false`, so the mask is the only thing describing it.
+At `0`, gates that project nowhere at all (behind the camera, off the far side
+of the track) are dropped instead of returned empty, so every detection you get
+back has something in its mask.
+
 `boundingBox` and `maskBoundingBox` are not the same box, and the difference
 matters:
 
 - `boundingBox` spans the **visible keypoints**, so it is empty
   (`inf, inf, -inf, -inf`) for a gate that is fully occluded or has no corner in
-  the frustum.
+  the frustum. It is a continuous min/max over projected coordinates;
+  `maskBoundingBox` is an inclusive **pixel index** box, so a one-pixel
+  silhouette gives `x1 == x2`.
 - `maskBoundingBox` is the box of the rendered silhouette. A fisheye bows a
   gate's straight edges **outside** the straight lines joining its corners --
   which is why the faces are subdivided before projection -- so a box built from
@@ -87,9 +99,44 @@ matters:
   820x616. Use this one for anything that has to contain the gate.
 
 `mask` is the same silhouette `render()` would draw for this gate alone, before
-other gates occlude it; OR-ing every detection's `mask` reproduces `render()`
-exactly. It costs nothing extra: it is the footprint the cross-gate occlusion
-test already builds.
+other gates occlude it, on the same grid as `render()` — so it lines up with
+`keypoints` and both boxes. How exactly it reconstructs `render()` depends on
+two things, sampled over 120 poses at 820x616 -> 64x64:
+
+| | `nearest` | `area` |
+| --- | --- | --- |
+| `min_visible_corners = 0` | identical, 0 px | same coverage (1 px), values differ on 1924 px |
+| `min_visible_corners = 3` | 1959 px differ | 4369 px differ |
+
+Two separate effects, both worth knowing:
+
+- **Filtered gates.** `render()` draws every gate; `renderDetections` returns
+  only those passing `min_visible_corners`. So OR-ing the masks reproduces
+  `render()` only at `min_visible_corners = 0`.
+- **Soft resampling.** With `inter_method: area` each mask carries its own
+  coverage fraction, and the maximum of two fractions is not the fraction of
+  their union — so where two gates fall in the same output pixel the values
+  disagree, by up to 111/255. Coverage (which pixels are non-zero) still
+  matches. With `nearest` the reconstruction is exact.
+
+The silhouette itself is free — it is the footprint the cross-gate occlusion
+test already builds. Resampling it to the output size is what costs, and how
+much is entirely `inter_method`'s doing (820x616 -> 64x64, per gate):
+
+| | `nearest` | `linear` | `area` |
+| --- | --- | --- | --- |
+| per gate | 2.8 µs | 8.5 µs | 667 µs |
+| per pose, 5.7 gates | 0.02 ms | 0.05 ms | 3.8 ms |
+
+Only `area` is worth thinking about: it roughly triples `renderDetections`,
+which is about 2 ms a pose on its own. It is also the library default, though
+the config in this repo sets `nearest`. Under `nearest` or `linear` the resize
+does not show above measurement noise.
+
+Resampling is also what makes the field cheap to keep: a 64x64 mask is 4 KB
+where the 820x616 original is 505 KB, so a pose's worth of masks is tens of
+kilobytes rather than megabytes — the difference between holding a dataset's
+detections in memory and not.
 
 When the poses are known up front — offline dataset rendering, or a
 vectorised simulator stepping N drones at once — `render()` also takes a
@@ -266,6 +313,8 @@ masks = renderer.render_batch(poses)
 # Note it does not release the GIL, so other Python threads block for the duration.
 
 detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
+# Pass 0 for every gate in the picture, including ones whose corners all left the
+# fisheye cone -- those have an empty bounding_box but a real `mask`.
 for d in detections:
     print(d.gate, d.bounding_box, [(k.name, k.x, k.y, k.visible) for k in d.keypoints])
     # d.mask is this gate's own silhouette, a (height, width) uint8 array.

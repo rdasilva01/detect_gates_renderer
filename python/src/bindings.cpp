@@ -115,8 +115,9 @@ NB_MODULE(_detect_gates_renderer, m) {
             // wrong and rejected.
             nb::rv_policy::automatic,
             "This gate's own silhouette as a (height, width) uint8 array, before other "
-            "gates occlude it. All zeros when the gate projects nowhere, which is the "
-            "exact test for whether it is in the picture at all.")
+            "gates occlude it. Same grid as render(), so it lines up with keypoints "
+            "and bounding_box. At min_visible_corners=0 gates that project nowhere are "
+            "dropped, so a returned detection always has something in its mask.")
         .def_ro("mask_bounding_box", &GateDetection::maskBoundingBox,
                 "Bounding box of `mask`. Follows the fisheye-curved silhouette, so unlike "
                 "`bounding_box` it stays correct when the edges bow outside the corners and "

@@ -315,6 +315,16 @@ cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const 
     return renderInstances(gatesPx, labels, imageWidth, imageHeight);
 }
 
+BoundingBox boundingBoxOfMask(const cv::Mat& mask) {
+    const cv::Rect box = cv::boundingRect(mask);
+    if (box.empty()) {
+        return BoundingBox{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
+                            -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+    }
+    return BoundingBox{static_cast<double>(box.x), static_cast<double>(box.y),
+                        static_cast<double>(box.x + box.width - 1), static_cast<double>(box.y + box.height - 1)};
+}
+
 std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
                                         const DronePose& dronePos, const Transform& tBaseCam,
                                         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,
@@ -474,18 +484,29 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
         }
         det.boundingBox = BoundingBox{minX, minY, maxX, maxY};
 
-        // Free: cv::Mat is refcounted, so this shares the buffer the occlusion
-        // test already built rather than rendering the gate a second time.
+        // Free here: cv::Mat is refcounted, so this shares the buffer the
+        // occlusion test already built rather than rendering the gate a second
+        // time. `GateRenderer::renderDetections` resamples it to the output
+        // resolution afterwards, which is where it stops being free.
         det.mask = cand.footprint;
-        const cv::Rect box = cv::boundingRect(cand.footprint);
-        det.maskBoundingBox =
-            box.empty() ? BoundingBox{std::numeric_limits<double>::infinity(),
-                                       std::numeric_limits<double>::infinity(),
-                                       -std::numeric_limits<double>::infinity(),
-                                       -std::numeric_limits<double>::infinity()}
-                        : BoundingBox{static_cast<double>(box.x), static_cast<double>(box.y),
-                                       static_cast<double>(box.x + box.width - 1),
-                                       static_cast<double>(box.y + box.height - 1)};
+        det.maskBoundingBox = boundingBoxOfMask(cand.footprint);
+
+        // `minVisibleCorners == 0` means "everything in the picture", not
+        // "every gate in the config". Without this the caller also gets the
+        // gates behind the camera and off the far side of the track -- at the
+        // default 3 they are excluded by the corner count, but 0 excludes
+        // nothing, and a gate that projects nowhere has an empty mask, an
+        // empty box and eight `inFrustum = false` keypoints, i.e. nothing to
+        // describe it at all.
+        //
+        // This is the setting that makes the mask worth having: a gate can sit
+        // close and off to one side so that every corner leaves the
+        // `theta < thetaMax` cone while its frame still crosses the image.
+        // Such a gate is dropped at any minVisibleCorners > 0, and the mask is
+        // the only truthful description of it.
+        if (minVisibleCorners == 0 && det.maskBoundingBox.x2 < det.maskBoundingBox.x1) {
+            continue;
+        }
 
         detections.push_back(std::move(det));
     }
