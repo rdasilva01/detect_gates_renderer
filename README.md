@@ -91,6 +91,58 @@ other gates occlude it; OR-ing every detection's `mask` reproduces `render()`
 exactly. It costs nothing extra: it is the footprint the cross-gate occlusion
 test already builds.
 
+When the poses are known up front — offline dataset rendering, or a
+vectorised simulator stepping N drones at once — `render()` also takes a
+whole vector and parallelises over poses:
+
+```cpp
+std::vector<cv::Mat> masks = renderer.render(poses);  // masks[i] for poses[i]
+```
+
+Each mask is byte-for-byte what the single-pose `render()` would have
+returned; it *is* that loop, just spread over cores. A live single-drone loop
+cannot use it — the next pose does not exist until the current mask has been
+acted on.
+
+Parallelism needs OpenMP at build time. It is looked for with
+`find_package(OpenMP QUIET)`, and without it the batch is a plain serial loop:
+the results are identical either way, only the speed changes.
+
+Thread count comes from `OMP_NUM_THREADS`, so a caller sharing the machine
+with a training job can say so. **More threads is not better here.** A mask
+costs about a millisecond, so past a handful of threads the dispatch and the
+memory traffic cost more than the work being handed out. Measured idle on a
+24-core host, speedup over the serial loop at 32 poses:
+
+| threads | 8 | 16 | 24 |
+| --- | --- | --- | --- |
+| speedup | 3.69x | 3.47x | 2.16x |
+
+The OpenMP default is one thread per core, which is the worst row of that
+table — `OMP_NUM_THREADS=8` is a better starting point.
+
+Poses can be given as a quaternion instead of roll/pitch/yaw. Frames are
+REP-103 throughout — world ENU (x east, y north, z up), body FLU (x forward,
+y left, z up) — so this is only a change of parameterization:
+
+```cpp
+detect_gates::DronePose pose =
+    detect_gates::poseFromQuaternion(x, y, z, qw, qx, qy, qz);
+cv::Mat mask = renderer.render(pose);            // and renderDetections(pose)
+```
+
+```python
+pose = DronePose.from_quaternion(x, y, z, qw, qx, qy, qz)
+mask = renderer.render(pose)
+```
+
+The quaternion is **scalar first, `(w, x, y, z)`** — note that ROS's
+`geometry_msgs/Quaternion` orders its *fields* `x, y, z, w`. It need not be
+normalized. Two conventions worth stating, since both are easy to get backwards:
+yaw is zero pointing **east** and increases counter-clockwise, and because the
+body y-axis points *left*, positive pitch is **nose down** (the opposite of the
+NED/FRD aerospace convention).
+
 Pass `rectified = true` as the 4th constructor argument to render as seen by
 a rectified (pinhole) view of the fisheye camera instead of the raw fisheye
 projection (applies to both `render()` and `renderDetections()`).
@@ -99,6 +151,45 @@ The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
 `loadCameraCalibration`, `renderPose`, `detectGates`, ...) are still
 available directly if you need more control (e.g. reloading a gate layout
 without re-reading the camera calibration).
+
+## Output resolution
+
+By default a mask comes out at the camera calibration's `image_width` /
+`image_height`. Four optional keys in `config.yaml` change that:
+
+| key | meaning |
+| --- | --- |
+| `output_width`, `output_height` | mask size handed back. Set together, or leave both out for the calibration resolution. |
+| `inter_method` | `nearest` \| `linear` \| `area` — how the mask is resampled down. Ignored when `native_inter` is true. |
+| `native_inter` | rasterize straight at the output resolution instead of rendering large and resampling. |
+
+Do **not** get this by editing `image_width`/`image_height` in the camera
+calibration: intrinsics are tied to the resolution, so shrinking the image
+without scaling `fx, fy, cx, cy` yields a small crop of the view rather than a
+downscaled one (at 64×64 that is an empty mask on ~95% of poses). The keys
+above scale the intrinsics for you, leaving the field of view untouched.
+
+`renderDetections()` keypoints and bounding boxes are returned in
+output-resolution pixels, so they always line up with `render()`'s mask.
+
+Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
+
+- `area` (the default) makes the mask **soft**: each output pixel carries the
+  fraction of itself covered by gate, so a frame thinner than one output pixel
+  survives as a partial value instead of being hit or missed at random.
+  Threshold it yourself if your loss needs hard labels. `nearest` stays binary
+  but point-samples one pixel per block and breaks thin frames into dots
+  (measured over 54 poses at 0.3–26 m: IoU 0.55 against true coverage, vs 0.71
+  for `area`).
+- `native_inter: true` is ~18× faster (0.25 vs 4.45 ms/frame at 64×64) and
+  worth it for very large datasets, but a rasterizer only answers yes/no per
+  pixel: sub-pixel frames get rounded up to a whole one (~+15% mask area at
+  64×64) and a soft mask is not possible.
+
+The aspect ratio is not preserved for you — 820×616 → 64×64 squashes
+horizontally (12.8×) more than vertically (9.6×). That is fine provided the
+real camera images are resized identically; if you letterbox or crop those, do
+the same to the mask.
 
 ## Example
 
@@ -156,6 +247,24 @@ pose = DronePose(x=19.0, y=2.0, z=0.155, roll=0.0, pitch=0.0, yaw=3.13)
 mask = renderer.render(pose)
 # `mask` is a (height, width) uint8 numpy array. `renderer.render(x, y, z, roll, pitch, yaw)` also works.
 
+coverage, instances = renderer.render_segmented(pose)
+# Semantic and instance segmentation for the same pose.
+#   `coverage`  is byte-for-byte what `render()` returns: soft, because `inter_method: area`
+#               blends a frame thinner than an output pixel into a partial value.
+#   `instances` is 0 for background and otherwise the gate's 1-based index into
+#               `renderer.gate_names`, the nearer gate owning any overlap.
+# `instances > 0` exactly where `coverage > 0`, so every covered pixel has an owner.
+# A label is an identity and cannot be blended -- averaging gate 3 and gate 7 would give
+# gate 5 -- so instances are resampled by area-per-label and argmax, never by averaging.
+print(renderer.gate_names[instances[instances > 0][0] - 1])
+
+masks = renderer.render_batch(poses)
+# Renders a sequence of poses at once, as an (n, height, width) uint8 numpy array.
+# Byte-for-byte what `np.stack([renderer.render(p) for p in poses])` gives, parallelised
+# over cores. See "Usage from other C++ code" above for when this applies and for why
+# `OMP_NUM_THREADS=8` beats letting it use every core.
+# Note it does not release the GIL, so other Python threads block for the duration.
+
 detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
 for d in detections:
     print(d.gate, d.bounding_box, [(k.name, k.x, k.y, k.visible) for k in d.keypoints])
@@ -185,10 +294,16 @@ python examples/python/visualize_detections.py --output overlay.png
 equivalent): it renders continuously in a window (with an FPS counter) and
 lets you fly around in the drone's body frame with the keyboard (arrows =
 forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
-Tab = toggle the pose-detection overlay on/off, Space = toggle rectified
-vs. raw fisheye view, Esc = quit). Requires a
+Tab = toggle the pose-detection overlay on/off, `1` = toggle the FPS readout,
+`2` = toggle the full-resolution mask vs. the configured output size,
+Space = toggle rectified vs. raw fisheye view, Esc = quit). Requires a
 GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 
 ```sh
 python examples/python/live_view.py
 ```
+
+Masks smaller than `--display-size` (default 820x616) are upscaled
+nearest-neighbour for viewing, so a renderer configured for 64x64 output still
+gives a readable window — the overlay and text are drawn at full size over the
+mask's real pixel grid. This affects the preview only.

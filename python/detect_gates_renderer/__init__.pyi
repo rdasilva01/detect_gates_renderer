@@ -1,4 +1,4 @@
-from typing import overload
+from typing import overload, Sequence
 
 import numpy as np
 import numpy.typing as npt
@@ -13,6 +13,9 @@ class DronePose:
 
     def __init__(self, x: float = ..., y: float = ..., z: float = ..., roll: float = ..., pitch: float = ...,
                  yaw: float = ...) -> None: ...
+    @staticmethod
+    def from_quaternion(x: float, y: float, z: float, qw: float, qx: float, qy: float,
+                        qz: float) -> DronePose: ...
 
 class Keypoint:
     name: str
@@ -50,6 +53,14 @@ class GateRenderer:
     @overload
     def render(self, x: float, y: float, z: float, roll: float, pitch: float,
                yaw: float) -> npt.NDArray[np.uint8]: ...
+    def render_batch(self, poses: Sequence[DronePose]) -> npt.NDArray[np.uint8]: ...
+    @overload
+    def render_segmented(self, pose: DronePose) -> tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]]: ...
+    @overload
+    def render_segmented(self, x: float, y: float, z: float, roll: float, pitch: float,
+                         yaw: float) -> tuple[npt.NDArray[np.uint8], npt.NDArray[np.uint8]]: ...
+    @property
+    def gate_names(self) -> list[str]: ...
     @overload
     def render_detections(self, pose: DronePose, min_visible_corners: int = ...) -> list[GateDetection]: ...
     @overload

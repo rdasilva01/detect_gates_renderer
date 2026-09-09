@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <stdexcept>
 
 namespace detect_gates {
 
@@ -35,6 +36,23 @@ Eigen::Vector3d matrixToRpy(const Eigen::Matrix3d& R) {
         yaw = std::atan2(-R(0, 1), R(1, 1));
     }
     return Eigen::Vector3d(roll, pitch, yaw);
+}
+
+Eigen::Matrix3d quaternionToMatrix(double w, double x, double y, double z) {
+    const double norm = std::sqrt(w * w + x * x + y * y + z * z);
+    if (norm < 1e-12) {
+        throw std::invalid_argument("quaternionToMatrix: quaternion has zero norm");
+    }
+    w /= norm;
+    x /= norm;
+    y /= norm;
+    z /= norm;
+
+    Eigen::Matrix3d r;
+    r << 1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w),       2.0 * (x * z + y * w),
+         2.0 * (x * y + z * w),       1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w),
+         2.0 * (x * z - y * w),       2.0 * (y * z + x * w),       1.0 - 2.0 * (x * x + y * y);
+    return r;
 }
 
 Transform poseToTransform(double x, double y, double z, double roll, double pitch, double yaw) {

@@ -26,6 +26,40 @@ struct DronePose {
     double roll = 0.0, pitch = 0.0, yaw = 0.0;
 };
 
+// Build a DronePose from a position and an orientation quaternion, scalar
+// first: (w, x, y, z). Frames are REP-103 as everywhere else here -- world ENU
+// (x east, y north, z up), body FLU (x forward, y left, z up) -- so this is a
+// pure change of parameterization and the result renders identically to the
+// equivalent roll/pitch/yaw.
+//
+// Note ROS's geometry_msgs/Quaternion orders its *fields* x, y, z, w; this
+// takes w first. The quaternion need not be normalized.
+//
+// The rotation is decomposed back into roll/pitch/yaw, which is exact to
+// ~3e-14 rad, degrading to ~7e-8 rad only when the pitch is within a
+// micro-radian of straight up or down. Both are far below one pixel at any
+// range this renders.
+DronePose poseFromQuaternion(double x, double y, double z, double qw, double qx, double qy, double qz);
+
+// How a mask is resampled from the render resolution down to the output
+// resolution. Unused when `OutputSettings::nativeInter` is set.
+enum class InterMethod { Nearest, Linear, Area };
+
+// Output mask resolution, from config.yaml. Entirely optional: leave
+// `output_width`/`output_height` out and masks come out at the camera
+// calibration's resolution, exactly as before this existed.
+struct OutputSettings {
+    int width = 0;  // <= 0 means "whatever the camera calibration says"
+    int height = 0;
+    InterMethod interMethod = InterMethod::Area;
+    // Rasterize straight at the output resolution, with the intrinsics scaled
+    // to match, instead of rendering at the calibration resolution and
+    // resampling. Much faster, but a rasterizer only answers yes/no per pixel,
+    // so it cannot represent a gate frame thinner than one output pixel as
+    // anything but a whole one.
+    bool nativeInter = false;
+};
+
 struct CameraCalibration {
     int imageWidth = 0;
     int imageHeight = 0;
@@ -33,6 +67,11 @@ struct CameraCalibration {
     cv::Mat distCoeffs;
     // Transform from the camera frame to the drone base frame.
     Transform tBaseCam;
+    // Parsed from `distortion_model` ("fisheye"/"equidistant" -> true,
+    // anything else, e.g. "radtan"/"plumb_bob" -> false). Defaults to true
+    // (missing field) to match every calibration this library shipped with
+    // before this field existed.
+    bool fisheye = true;
 };
 
 struct Keypoint {
@@ -40,10 +79,9 @@ struct Keypoint {
     double x = 0.0, y = 0.0;
     bool visible = false;
     // True if this corner is within the camera's field of view at all (the
-    // `theta < thetaMax` cone and the image bounds), regardless of
-    // occlusion. When false, (x, y) is not a meaningful pixel location --
-    // the fisheye projection formula is only well-defined inside that cone,
-    // so a corner outside it can project to an arbitrary, unrelated pixel.
+    // `theta < thetaMax` cone and the image bounds), regardless of occlusion.
+    // When false, (x, y) is a real pixel location the corner would occupy on
+    // an unbounded sensor, but one the camera cannot see.
     bool inFrustum = false;
 };
 
@@ -89,14 +127,40 @@ std::map<std::string, GatePose> loadGatesConfig(const std::string& path);
 // Load a config.yaml's `gate_dimensions` entry.
 GateDims loadGateDims(const std::string& path);
 
+// Load a config.yaml's optional `output_width`, `output_height`,
+// `inter_method` (nearest|linear|area) and `native_inter` entries.
+// Missing keys leave `OutputSettings`'s defaults in place.
+OutputSettings loadOutputSettings(const std::string& path);
+
 // Load a ROS2-style camera_calibration.yaml, unwrapping the `/**: ros__parameters` namespace.
 CameraCalibration loadCameraCalibration(const std::string& path);
+
+// `thetaMax` below is the camera's angular extent: the FOV clipping cone for
+// the pinhole model, and for the fisheye model the bound on which corners
+// count as visible. The 89 deg default suits neither camera in particular --
+// pass `fisheyeThetaMax` / `rectifiedThetaMax` (projection.hpp) for the real
+// value, as `GateRenderer` does. It matters most for a >180 deg fisheye, where
+// the true extent is past 90 deg and the default would discard the outer ring
+// of the image.
 
 // Render the segmentation mask seen from `dronePos`.
 cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
                     const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
                     const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
                     double thetaMax = 89.0 * CV_PI / 180.0);
+
+// Render the INSTANCE mask seen from `dronePos`: 0 for background, otherwise
+// the gate's 1-based position in `gates` iteration order (i.e. sorted by gate
+// name, which is what `gateNames()` returns). Pixel-for-pixel consistent with
+// `renderPose`, because both rasterize the same per-gate silhouettes.
+//
+// Where two gates overlap the nearer one owns the pixel, resolved by mean
+// camera-frame depth of the gate centre. `renderPose` needs no such rule: it
+// OR-s, and OR does not care who contributed.
+cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
+                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
+                             double thetaMax = 89.0 * CV_PI / 180.0);
 
 // Detect per-gate keypoints (4 inner + 4 outer corners) and bounding boxes
 // as seen from `dronePos`, with cross-gate occlusion handling. Gates with
