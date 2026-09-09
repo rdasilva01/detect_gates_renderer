@@ -73,6 +73,36 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // (4 *_inner + 4 *_outer, each with name/x/y/visible).
 ```
 
+When the poses are known up front — offline dataset rendering, or a
+vectorised simulator stepping N drones at once — `render()` also takes a
+whole vector and parallelises over poses:
+
+```cpp
+std::vector<cv::Mat> masks = renderer.render(poses);  // masks[i] for poses[i]
+```
+
+Each mask is byte-for-byte what the single-pose `render()` would have
+returned; it *is* that loop, just spread over cores. A live single-drone loop
+cannot use it — the next pose does not exist until the current mask has been
+acted on.
+
+Parallelism needs OpenMP at build time. It is looked for with
+`find_package(OpenMP QUIET)`, and without it the batch is a plain serial loop:
+the results are identical either way, only the speed changes.
+
+Thread count comes from `OMP_NUM_THREADS`, so a caller sharing the machine
+with a training job can say so. **More threads is not better here.** A mask
+costs about a millisecond, so past a handful of threads the dispatch and the
+memory traffic cost more than the work being handed out. Measured idle on a
+24-core host, speedup over the serial loop at 32 poses:
+
+| threads | 8 | 16 | 24 |
+| --- | --- | --- | --- |
+| speedup | 3.69x | 3.47x | 2.16x |
+
+The OpenMP default is one thread per core, which is the worst row of that
+table — `OMP_NUM_THREADS=8` is a better starting point.
+
 Poses can be given as a quaternion instead of roll/pitch/yaw. Frames are
 REP-103 throughout — world ENU (x east, y north, z up), body FLU (x forward,
 y left, z up) — so this is only a change of parameterization:
@@ -209,6 +239,13 @@ coverage, instances = renderer.render_segmented(pose)
 # A label is an identity and cannot be blended -- averaging gate 3 and gate 7 would give
 # gate 5 -- so instances are resampled by area-per-label and argmax, never by averaging.
 print(renderer.gate_names[instances[instances > 0][0] - 1])
+
+masks = renderer.render_batch(poses)
+# Renders a sequence of poses at once, as an (n, height, width) uint8 numpy array.
+# Byte-for-byte what `np.stack([renderer.render(p) for p in poses])` gives, parallelised
+# over cores. See "Usage from other C++ code" above for when this applies and for why
+# `OMP_NUM_THREADS=8` beats letting it use every core.
+# Note it does not release the GIL, so other Python threads block for the duration.
 
 detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
 for d in detections:

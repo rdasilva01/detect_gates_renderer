@@ -55,7 +55,7 @@ target_compile_features(detect_gates_renderer PUBLIC cxx_std_17)
 # dependency, not a functional one.
 find_package(OpenMP QUIET COMPONENTS CXX)
 if(OpenMP_CXX_FOUND)
-    target_link_libraries(detect_gates_renderer PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(detect_gates_renderer PRIVATE OpenMP::OpenMP_CXX)
     message(STATUS "detect_gates_renderer: OpenMP found, batched render is parallel")
 else()
     message(STATUS "detect_gates_renderer: no OpenMP, batched render is serial")
