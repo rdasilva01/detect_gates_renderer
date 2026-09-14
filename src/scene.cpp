@@ -44,14 +44,61 @@ constexpr const char* kCanonicalNames[4] = {"top_left", "top_right", "bottom_rig
 constexpr int kFrontIndexMap[4] = {2, 3, 0, 1};
 constexpr int kBackIndexMap[4] = {3, 2, 1, 0};
 
+// Is the camera inside this gate's through-hole -- between the two apertures
+// and laterally within them? See `singleGateMask` for what it changes.
+bool cameraInAperture(const GatePose& gate, const GateDims& gateDims, const Eigen::Vector3d& camPosWorld) {
+    const Eigen::Vector3d offset = camPosWorld - Eigen::Vector3d(gate.x, gate.y, gate.z);
+    const Eigen::Vector3d normal(std::cos(gate.yaw), std::sin(gate.yaw), 0.0);
+    const Eigen::Vector3d lateral(-std::sin(gate.yaw), std::cos(gate.yaw), 0.0);
+    const double innerHalf = gateDims.innerSize / 2.0;
+    return std::abs(offset.dot(normal)) <= gateDims.thickness / 2.0 && std::abs(offset.dot(lateral)) <= innerHalf &&
+           std::abs(offset.z()) <= innerHalf;
+}
+
+// True if this outline lies wholly off one side of the canvas, and so cannot
+// contribute a pixel no matter how it is filled.
+bool offCanvas(const std::vector<cv::Point2d>& pts, int imageWidth, int imageHeight) {
+    if (pts.empty()) {
+        return true;
+    }
+    double minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y;
+    for (const auto& p : pts) {
+        minX = std::min(minX, p.x);
+        maxX = std::max(maxX, p.x);
+        minY = std::min(minY, p.y);
+        maxY = std::max(maxY, p.y);
+    }
+    return maxX < 0 || minX > imageWidth || maxY < 0 || minY > imageHeight;
+}
+
 // Transform a world-frame face to camera frame, subdivide its edges, and
 // clip+project it -- the same per-face pipeline `renderPose` uses, shared so
 // pose-mode occlusion tests against the exact rendered silhouette rather
 // than an unsubdivided straight-line approximation.
 FacePixels projectFaceClipped(const Polygon3d& faceWorld, const Transform& tCamWorld, const cv::Mat& cameraMatrix,
-                               const cv::Mat& distCoeffs, double thetaMax, bool fisheye) {
+                               const cv::Mat& distCoeffs, double thetaMax, bool fisheye, int imageWidth,
+                               int imageHeight) {
     const Polygon3d faceCam = toCameraFrame(faceWorld, tCamWorld);
-    return projectPolygon(subdivideEdges(faceCam), cameraMatrix, distCoeffs, thetaMax, 32, fisheye);
+    return projectPolygon(subdivideEdges(faceCam), cameraMatrix, distCoeffs, imageWidth, imageHeight, thetaMax, 32,
+                           fisheye);
+}
+
+// Can this gate contribute nothing to the canvas? Its mask is its outer faces
+// minus its apertures, so if no outer face reaches the canvas there is nothing
+// to draw and the whole gate can be skipped.
+//
+// This has to be judged per gate, never per face. An empty outline means
+// "skip me" to `singleGateMask`, which is right for an outer face and quietly
+// destructive for an inner one -- dropping an off-canvas aperture there leaves
+// the gate with no hole to cut, and (both apertures gone) with no mask at all.
+// That is the shape of the bug this whole path is fixing; do not reintroduce it
+// as an optimization.
+bool gateOffCanvas(const GateFacesPx& gatePx, int imageWidth, int imageHeight) {
+    return std::all_of(gatePx.outerFacesPx.begin(), gatePx.outerFacesPx.end(), [&](const FacePixels& face) {
+        // An inverted outline that misses the canvas means the face *covers*
+        // the canvas, so it is never grounds for skipping.
+        return face.points.empty() || (!face.inverted && offCanvas(face.points, imageWidth, imageHeight));
+    });
 }
 
 // One gate's detection candidate, before cross-gate occlusion is applied.
@@ -72,6 +119,11 @@ struct Candidate {
 };
 
 }  // namespace
+
+DronePose poseFromQuaternion(double x, double y, double z, double qw, double qx, double qy, double qz) {
+    const Eigen::Vector3d rpy = matrixToRpy(quaternionToMatrix(qw, qx, qy, qz));
+    return DronePose{x, y, z, rpy.x(), rpy.y(), rpy.z()};
+}
 
 std::map<std::string, GatePose> loadGatesConfig(const std::string& path) {
     const YAML::Node root = YAML::LoadFile(path);
@@ -94,6 +146,44 @@ GateDims loadGateDims(const std::string& path) {
                      dims["thickness"] ? dims["thickness"].as<double>() : 0.0};
 }
 
+OutputSettings loadOutputSettings(const std::string& path) {
+    const YAML::Node root = YAML::LoadFile(path);
+
+    OutputSettings output;
+
+    const bool hasWidth = static_cast<bool>(root["output_width"]);
+    const bool hasHeight = static_cast<bool>(root["output_height"]);
+    if (hasWidth != hasHeight) {
+        throw std::runtime_error("config: output_width and output_height must be set together");
+    }
+    if (hasWidth) {
+        output.width = root["output_width"].as<int>();
+        output.height = root["output_height"].as<int>();
+        if (output.width <= 0 || output.height <= 0) {
+            throw std::runtime_error("config: output_width and output_height must be positive");
+        }
+    }
+
+    if (root["inter_method"]) {
+        const std::string method = root["inter_method"].as<std::string>();
+        if (method == "nearest") {
+            output.interMethod = InterMethod::Nearest;
+        } else if (method == "linear") {
+            output.interMethod = InterMethod::Linear;
+        } else if (method == "area") {
+            output.interMethod = InterMethod::Area;
+        } else {
+            throw std::runtime_error("config: inter_method must be nearest, linear or area (got '" + method + "')");
+        }
+    }
+
+    if (root["native_inter"]) {
+        output.nativeInter = root["native_inter"].as<bool>();
+    }
+
+    return output;
+}
+
 CameraCalibration loadCameraCalibration(const std::string& path) {
     YAML::Node root = YAML::LoadFile(path);
     if (root["/**"]) {
@@ -105,6 +195,10 @@ CameraCalibration loadCameraCalibration(const std::string& path) {
     calib.imageHeight = root["image_height"].as<int>();
     calib.cameraMatrix = matFromYamlData(root["camera_matrix"], 3, 3);
     calib.distCoeffs = matFromYamlData(root["distortion_coefficients"], 4, 1);
+    if (root["distortion_model"]) {
+        const std::string model = root["distortion_model"].as<std::string>();
+        calib.fisheye = (model == "fisheye" || model == "equidistant");
+    }
 
     const YAML::Node& tf = root["camera_transform"];
     calib.tBaseCam = poseToTransform(tf["x"].as<double>(), tf["y"].as<double>(), tf["z"].as<double>(),
@@ -122,7 +216,8 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
     const Transform tCamWorld = invert(tWorldCam);
 
     auto projectFace = [&](const Polygon3d& faceWorld) -> FacePixels {
-        return projectFaceClipped(faceWorld, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye);
+        return projectFaceClipped(faceWorld, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                   imageHeight);
     };
 
     std::vector<GateFacesPx> gatesPx;
@@ -132,14 +227,13 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
                       gateDims.thickness);
 
         GateFacesPx gatePx;
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, tWorldCam.t);
         gatePx.outerFacesPx.reserve(faces.outerFaces.size());
         for (const auto& face : faces.outerFaces) {
             gatePx.outerFacesPx.push_back(projectFace(face));
         }
 
-        const bool allOuterClipped = std::all_of(gatePx.outerFacesPx.begin(), gatePx.outerFacesPx.end(),
-                                                   [](const FacePixels& f) { return !f.has_value(); });
-        if (allOuterClipped) {
+        if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
             continue;
         }
 
@@ -152,6 +246,73 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
     }
 
     return renderSegmentation(gatesPx, imageWidth, imageHeight);
+}
+
+cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
+                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                             double thetaMax) {
+    const Transform tWorldBase =
+        poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
+    const Transform tWorldCam = compose(tWorldBase, tBaseCam);
+    const Transform tCamWorld = invert(tWorldCam);
+
+    auto projectFace = [&](const Polygon3d& faceWorld) -> FacePixels {
+        return projectFaceClipped(faceWorld, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                   imageHeight);
+    };
+
+    struct Painted {
+        GateFacesPx px;
+        uint8_t label = 0;
+        double depth = 0.0;
+    };
+    std::vector<Painted> painted;
+    uint8_t label = 0;
+    for (const auto& [name, gatePose] : gates) {
+        // Incremented for EVERY gate, including ones that fall off canvas, so a
+        // label means the same gate whatever happens to be in view. A label
+        // that shifted with visibility would silently rename gates between
+        // frames, which is precisely the identity this exists to provide.
+        ++label;
+        const GateFaces faces =
+            gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize, gateDims.innerSize,
+                      gateDims.thickness);
+
+        GateFacesPx gatePx;
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, tWorldCam.t);
+        gatePx.outerFacesPx.reserve(faces.outerFaces.size());
+        for (const auto& face : faces.outerFaces) {
+            gatePx.outerFacesPx.push_back(projectFace(face));
+        }
+
+        if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
+            continue;
+        }
+
+        gatePx.innerFacesPx.reserve(faces.innerFaces.size());
+        for (const auto& face : faces.innerFaces) {
+            gatePx.innerFacesPx.push_back(projectFace(face));
+        }
+
+        const Eigen::Vector3d centreCam =
+            tCamWorld.R * Eigen::Vector3d(gatePose.x, gatePose.y, gatePose.z) + tCamWorld.t;
+        painted.push_back(Painted{std::move(gatePx), label, centreCam.z()});
+    }
+
+    // Far to near, so the nearer gate is painted last and owns the overlap.
+    std::sort(painted.begin(), painted.end(),
+              [](const Painted& a, const Painted& b) { return a.depth > b.depth; });
+
+    std::vector<GateFacesPx> gatesPx;
+    std::vector<uint8_t> labels;
+    gatesPx.reserve(painted.size());
+    labels.reserve(painted.size());
+    for (auto& entry : painted) {
+        gatesPx.push_back(std::move(entry.px));
+        labels.push_back(entry.label);
+    }
+    return renderInstances(gatesPx, labels, imageWidth, imageHeight);
 }
 
 std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
@@ -228,15 +389,18 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
         // occlusion tests against the true curved/extruded shape rather
         // than a straight-line approximation of just the near face.
         GateFacesPx gatePx;
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, camPosWorld);
         gatePx.outerFacesPx.reserve(faces.outerFaces.size());
         for (const auto& face : faces.outerFaces) {
             gatePx.outerFacesPx.push_back(
-                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye));
+                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                    imageHeight));
         }
         gatePx.innerFacesPx.reserve(faces.innerFaces.size());
         for (const auto& face : faces.innerFaces) {
             gatePx.innerFacesPx.push_back(
-                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye));
+                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                    imageHeight));
         }
         cand.footprint = singleGateMask(gatePx, imageWidth, imageHeight);
 

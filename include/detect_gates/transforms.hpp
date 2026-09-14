@@ -20,6 +20,17 @@ Eigen::Matrix3d rpyToMatrix(double roll, double pitch, double yaw);
 // Inverse of rpyToMatrix: extract (roll, pitch, yaw) from R = Rz(yaw) * Ry(pitch) * Rx(roll).
 Eigen::Vector3d matrixToRpy(const Eigen::Matrix3d& R);
 
+// Rotation matrix from a quaternion, scalar first: (w, x, y, z).
+//
+// Same rotation `rpyToMatrix` describes and the same frames REP-103 uses --
+// world ENU (x east, y north, z up), body FLU (x forward, y left, z up) -- so
+// this is R_world_body, and quaternion and roll/pitch/yaw poses are
+// interchangeable.
+//
+// Watch the ordering: this takes w first, but ROS's geometry_msgs/Quaternion
+// lays its *fields* out x, y, z, w. The input need not be normalized.
+Eigen::Matrix3d quaternionToMatrix(double w, double x, double y, double z);
+
 // Build a transform from a 6-DOF pose.
 Transform poseToTransform(double x, double y, double z, double roll, double pitch, double yaw);
 
