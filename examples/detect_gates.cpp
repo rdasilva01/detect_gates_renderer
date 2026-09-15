@@ -73,7 +73,9 @@ void writeDetectionsJson(std::ostream& out, const std::vector<detect_gates::Gate
         for (size_t k = 0; k < det.keypoints.size(); ++k) {
             const auto& kp = det.keypoints[k];
             out << "{\"name\": \"" << kp.name << "\", \"x\": " << kp.x << ", \"y\": " << kp.y
-                << ", \"visible\": " << (kp.visible ? "true" : "false") << "}"
+                << ", \"visible\": " << (kp.visible ? "true" : "false") << ", \"world\": [" << kp.world.x() << ", "
+                << kp.world.y() << ", " << kp.world.z() << "], \"gate_local\": [" << kp.gateLocal.x() << ", "
+                << kp.gateLocal.y() << ", " << kp.gateLocal.z() << "]}"
                 << (k + 1 < det.keypoints.size() ? ", " : "");
         }
         out << "]}" << (i + 1 < detections.size() ? ",\n" : "\n");

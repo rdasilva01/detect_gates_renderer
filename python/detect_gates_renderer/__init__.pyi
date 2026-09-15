@@ -23,6 +23,13 @@ class Keypoint:
     y: float
     visible: bool
     in_frustum: bool
+    # The same corner in 3D, e.g. for PnP. `world`: world frame, metres.
+    # `gate_local`: the gate's frame -- origin at its pose (a double's bottom
+    # square centre), x lateral, y up, z along its facing normal.
+    @property
+    def world(self) -> tuple[float, float, float]: ...
+    @property
+    def gate_local(self) -> tuple[float, float, float]: ...
 
 class BoundingBox:
     x1: float

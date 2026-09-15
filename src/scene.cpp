@@ -885,6 +885,11 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
         // because the real frame is one piece there and has no such corners.
         const std::vector<Gate> parts = partsOf(entry);
         const bool isDouble = entry.shape == GateShape::Double;
+        // The gate's own frame for `Keypoint::gateLocal`: origin at its pose, x
+        // lateral, y up, z along its facing normal.
+        const Eigen::Vector3d gateOrigin(entry.pose.x, entry.pose.y, entry.pose.z);
+        const Eigen::Vector3d gateLateral(-std::sin(entry.pose.yaw), std::cos(entry.pose.yaw), 0.0);
+        const Eigen::Vector3d gateNormal(std::cos(entry.pose.yaw), std::sin(entry.pose.yaw), 0.0);
 
         Candidate cand;
         cand.gateName = name;
@@ -949,8 +954,12 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
                 const bool visible = inCone && inBounds;
 
                 const std::string suffix = i < n ? "_inner" : "_outer";
-                cand.keypoints.push_back(Keypoint{prefix + layout.names[i % n] + suffix, projected[i].x,
-                                                  projected[i].y, visible, /*inFrustum=*/visible});
+                Keypoint keypoint{prefix + layout.names[i % n] + suffix, projected[i].x, projected[i].y, visible,
+                                  /*inFrustum=*/visible};
+                keypoint.world = cornersWorld[i];
+                const Eigen::Vector3d offset = cornersWorld[i] - gateOrigin;
+                keypoint.gateLocal = Eigen::Vector3d(offset.dot(gateLateral), offset.z(), offset.dot(gateNormal));
+                cand.keypoints.push_back(std::move(keypoint));
                 cand.camPoints.push_back(p);
                 if (visible) {
                     ++visibleCount;

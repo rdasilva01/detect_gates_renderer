@@ -96,6 +96,19 @@ struct Keypoint {
     // When false, (x, y) is a real pixel location the corner would occupy on
     // an unbounded sensor, but one the camera cannot see.
     bool inFrustum = false;
+    // The same corner in 3D, for pairing 2D keypoints with 3D points (e.g. PnP).
+    // Keypoints are the corners of the gate face nearest the camera, so these
+    // move by the thickness when the camera crosses to the other side, and
+    // a name's left/right follow the image, not the gate.
+    //
+    // `world`: world frame (ENU), metres.
+    // `gateLocal`: the gate's own frame, metres -- origin at its configured pose
+    // (a double's bottom square centre), x along the gate's lateral axis
+    // (-sin yaw, cos yaw, 0), y up, z along its facing normal (cos yaw, sin yaw,
+    // 0). Right-handed; the near face is at z = -thickness/2 seen from the
+    // front and +thickness/2 seen from behind.
+    Eigen::Vector3d world = Eigen::Vector3d::Zero();
+    Eigen::Vector3d gateLocal = Eigen::Vector3d::Zero();
 };
 
 struct BoundingBox {

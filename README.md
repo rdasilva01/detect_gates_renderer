@@ -70,7 +70,8 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // this many visible keypoints (before or after cross-gate occlusion) are
 // omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
 // (x1,y1,x2,y2 over visible keypoints only), `keypoints` (the *_inner corners
-// then the *_outer ones, each with name/x/y/visible), plus `mask` (this
+// then the *_outer ones, each with name/x/y/visible and the corner in 3D as
+// `world` and `gateLocal`), plus `mask` (this
 // gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
 
@@ -239,6 +240,52 @@ without the outer corners where the squares meet (the real frame is one piece
 there): `top_top_left_inner … top_bottom_left_inner, top_top_left_outer,
 top_top_right_outer`, then `bottom_top_left_inner … bottom_bottom_left_inner,
 bottom_bottom_right_outer, bottom_bottom_left_outer`.
+
+Every keypoint also carries its corner in 3D, so detections can be paired with
+3D points, e.g. for PnP:
+
+- `world` — world frame (ENU), metres.
+- `gate_local` (C++ `gateLocal`) — the gate's own frame, metres: origin at the
+  gate's `pose` (a double's bottom square centre), x along the gate's lateral
+  axis `(-sin yaw, cos yaw, 0)`, y up, z along its facing normal
+  `(cos yaw, sin yaw, 0)`. PnP with these gives the camera pose relative to
+  that gate.
+
+Keypoints are the corners of the face nearest the camera, so a corner's 3D
+point moves by the frame's thickness when the camera crosses to the other side
+(z = −thickness/2 from the front, +thickness/2 from behind), and a name's
+left/right follows the image. Always take the point from the keypoint itself
+rather than from a fixed table by name.
+
+```python
+visible = [k for k in detection.keypoints if k.visible]
+object_points = np.array([k.gate_local for k in visible])
+image_points = np.array([(k.x, k.y) for k in visible])
+```
+
+The pixels are in the renderer's output resolution and, by default, fisheye:
+undistort them with the calibration's fisheye model, its intrinsics scaled to
+the output size, before a pinhole `cv2.solvePnP`. A `rectified` renderer's
+pixels are already pinhole; in C++ its camera matrix is
+`rectifiedCameraMatrix()` (projection.hpp), but Python has no accessor for it
+yet.
+
+To see all of this for a pose, `examples/python/view_3d_points.py` shows the
+camera image with the keypoints next to a rotatable 3D plot of the same corners,
+the true camera, and each gate's pose as PnP recovers it from `gate_local` and
+the pixels — drawn as bold axes over the gate's configured frame, with the
+position and orientation errors printed. It also runs one global PnP over the
+whole circuit — every visible corner of every detected gate against its `world`
+point — and turns the camera pose into the drone's position and roll/pitch/yaw,
+drawn and printed next to the true drone. `--pixel-noise SIGMA` moves every
+keypoint's pixel by Gaussian noise (SIGMA px per axis, 3D points untouched) to
+see how both kinds of PnP cope with an imperfect detector; `--seed` repeats a
+draw. It needs matplotlib and PyYAML:
+
+```sh
+python examples/python/view_3d_points.py --x 8.0 --y 10.5 --z 1.6 --yaw 1.5708
+python examples/python/view_3d_points.py --x 8.0 --y 10.5 --z 1.6 --yaw 1.5708 --output view.png
+```
 
 ## Output resolution
 

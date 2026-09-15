@@ -89,6 +89,15 @@ NB_MODULE(_detect_gates_renderer, m) {
         .def_rw("y", &Keypoint::y)
         .def_rw("visible", &Keypoint::visible)
         .def_rw("in_frustum", &Keypoint::inFrustum)
+        .def_prop_ro(
+            "world",
+            [](const Keypoint& k) { return std::array<double, 3>{k.world.x(), k.world.y(), k.world.z()}; },
+            "The corner in world coordinates (x, y, z), metres.")
+        .def_prop_ro(
+            "gate_local",
+            [](const Keypoint& k) { return std::array<double, 3>{k.gateLocal.x(), k.gateLocal.y(), k.gateLocal.z()}; },
+            "The corner in its gate's frame (x, y, z), metres: origin at the gate's pose (a double's bottom "
+            "square centre), x lateral, y up, z along the gate's facing normal. For PnP against this gate.")
         .def("__repr__", [](const Keypoint& k) {
             return "Keypoint(name='" + k.name + "', x=" + std::to_string(k.x) + ", y=" + std::to_string(k.y) +
                    ", visible=" + (k.visible ? "True" : "False") +
