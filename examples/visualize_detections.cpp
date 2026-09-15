@@ -15,16 +15,18 @@
 namespace {
 
 // "top_left_inner" -> "tl_i": first letter of each word in the side
-// ("top_left" -> "tl"), plus the first letter of the ring ("inner"/"outer"),
-// short enough to label a point without cluttering the image.
+// ("top_left" -> "tl", a double's "top_top_left" -> "ttl"), plus the first
+// letter of the ring ("inner"/"outer"), short enough to label a point without
+// cluttering the image.
 std::string abbreviate(const std::string& name) {
     const size_t lastUnderscore = name.rfind('_');
     const std::string side = name.substr(0, lastUnderscore);    // "top_left"
     const std::string ring = name.substr(lastUnderscore + 1);   // "inner" or "outer"
 
-    std::string abbrev;
-    abbrev += side.front();
-    abbrev += side[side.find('_') + 1];
+    std::string abbrev(1, side.front());
+    for (size_t i = side.find('_'); i != std::string::npos; i = side.find('_', i + 1)) {
+        abbrev += side[i + 1];
+    }
     return abbrev + "_" + ring.substr(0, 1);
 }
 
