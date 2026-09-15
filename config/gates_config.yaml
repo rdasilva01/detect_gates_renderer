@@ -2,6 +2,7 @@
 # Each gate: type, pose [x, y, z, yaw] and that type's dimensions (meters).
 #   square:  outer_size, inner_size (side lengths), thickness
 #   octagon: outer_size, inner_size (widths across flats), thickness
+#   double:  as square, for each of its two stacked squares; pose z is the bottom square's centre
 gates:
   gate01:
     type: square
@@ -35,20 +36,12 @@ gates:
     type: octagon
     pose: [18.00, 28.00, 1.45, 0.0000]
     dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
-  gate09_d:
-    type: square
+  gate09:
+    type: double
     pose: [24.00, 33.00, 1.45, 1.5708]
     dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
-  gate09_u:
-    type: square
-    pose: [24.00, 33.00, 4.15, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
-  gate10_u:
-    type: square
-    pose: [24.00, 24.00, 4.15, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
-  gate10_d:
-    type: square
+  gate10:
+    type: double
     pose: [24.00, 24.00, 1.45, -1.5708]
     dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate11:

@@ -35,10 +35,31 @@ Polygon3d octagonCorners(const Eigen::Vector3d& center, double halfSize, const E
     return corners;
 }
 
+// A double's outline: one square's width, two squares' height, from the bottom
+// square's centre up. CCW from (-halfSize, -halfSize), like `squareCorners`.
+Polygon3d doubleCorners(const Eigen::Vector3d& center, double halfSize, const Eigen::Vector3d& lateral,
+                         const Eigen::Vector3d& vertical) {
+    const double h = halfSize;
+    const double local[4][2] = {{-h, -h}, {h, -h}, {h, 3.0 * h}, {-h, 3.0 * h}};
+    Polygon3d corners;
+    corners.reserve(4);
+    for (const auto& p : local) {
+        corners.push_back(center + p[0] * lateral + p[1] * vertical);
+    }
+    return corners;
+}
+
 Polygon3d ringCorners(GateShape shape, const Eigen::Vector3d& center, double halfSize, const Eigen::Vector3d& lateral,
                        const Eigen::Vector3d& vertical) {
-    return shape == GateShape::Octagon ? octagonCorners(center, halfSize, lateral, vertical)
-                                       : squareCorners(center, halfSize, lateral, vertical);
+    switch (shape) {
+        case GateShape::Octagon:
+            return octagonCorners(center, halfSize, lateral, vertical);
+        case GateShape::Double:
+            return doubleCorners(center, halfSize, lateral, vertical);
+        case GateShape::Square:
+            break;
+    }
+    return squareCorners(center, halfSize, lateral, vertical);
 }
 
 }  // namespace
@@ -58,8 +79,6 @@ GateFaces gateFaces(GateShape shape, double x, double y, double z, double yaw, d
 
     const Polygon3d frontOuter = ringCorners(shape, frontCenter, outerHalf, lateral, vertical);
     const Polygon3d backOuter = ringCorners(shape, backCenter, outerHalf, lateral, vertical);
-    const Polygon3d frontInner = ringCorners(shape, frontCenter, innerHalf, lateral, vertical);
-    const Polygon3d backInner = ringCorners(shape, backCenter, innerHalf, lateral, vertical);
 
     GateFaces faces;
     faces.outerFaces.push_back(frontOuter);
@@ -70,8 +89,17 @@ GateFaces gateFaces(GateShape shape, double x, double y, double z, double yaw, d
         faces.outerFaces.push_back(Polygon3d{frontOuter[i], frontOuter[j], backOuter[j], backOuter[i]});
     }
 
-    faces.innerFaces.push_back(frontInner);
-    faces.innerFaces.push_back(backInner);
+    if (shape == GateShape::Double) {
+        // One square aperture per square, the top one a whole outer size up.
+        for (const double lift : {0.0, outerSize}) {
+            faces.innerFaces.push_back(squareCorners(frontCenter + lift * vertical, innerHalf, lateral, vertical));
+            faces.innerFaces.push_back(squareCorners(backCenter + lift * vertical, innerHalf, lateral, vertical));
+        }
+        return faces;
+    }
+
+    faces.innerFaces.push_back(ringCorners(shape, frontCenter, innerHalf, lateral, vertical));
+    faces.innerFaces.push_back(ringCorners(shape, backCenter, innerHalf, lateral, vertical));
 
     return faces;
 }

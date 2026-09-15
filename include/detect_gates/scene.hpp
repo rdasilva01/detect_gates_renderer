@@ -16,16 +16,18 @@ struct GatePose {
     double x = 0.0, y = 0.0, z = 0.0, yaw = 0.0;
 };
 
-// Frame dimensions. Sizes are a square's side, or an octagon's width across flats.
+// Frame dimensions. Sizes are a square's side (for a double, each of its two
+// squares'), or an octagon's width across flats.
 struct GateDims {
     double outerSize = 0.0;
     double innerSize = 0.0;
     double thickness = 0.0;
 };
 
-// One gate from gates_config.yaml. Both types so far are described by the same
+// One gate from gates_config.yaml. Every type so far is described by the same
 // three dimensions; a type that is not needs its own dimensions as well as its
-// own faces, keypoints and aperture test wherever `shape` is used.
+// own faces, keypoints and aperture test wherever `shape` is used. A double's
+// pose is its bottom square's centre.
 struct Gate {
     GateShape shape = GateShape::Square;
     GatePose pose;
@@ -109,7 +111,10 @@ struct GateDetection {
     // ring, each clockwise in the image from the top flat's left end. 8 for a
     // square (top_left, top_right, bottom_right, bottom_left), 16 for an
     // octagon (top_left, top_right, right_top, right_bottom, bottom_right,
-    // bottom_left, left_bottom, left_top).
+    // bottom_left, left_bottom, left_top). 12 for a double: its top square's
+    // then its bottom square's, prefixed top_ / bottom_, each in square order
+    // but without the outer corners where the two squares meet, which the
+    // one-piece frame does not have (top_bottom_*_outer, bottom_top_*_outer).
     std::vector<Keypoint> keypoints;
 
     // This gate's own silhouette, CV_8UC1 with 0/255 -- exactly what

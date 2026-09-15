@@ -219,16 +219,26 @@ gates:
 | --- | --- | --- |
 | `square` | `outer_size`, `inner_size` (side lengths), `thickness` (optional, default 0) | 8 |
 | `octagon` | `outer_size`, `inner_size` (widths across flats), `thickness` (optional, default 0) | 16 |
+| `double` | as `square`, for each of its two squares | 12 |
 
 An octagon is regular with its top and bottom flats horizontal; the 2.7 / 1.9 m
-gate has sides of 1.118 / 0.787 m. Stands and bases are not modelled for either
-type. An unknown type is an error at load time.
+gate has sides of 1.118 / 0.787 m. A double is two squares, one directly on top
+of the other, and `pose` is the **bottom** square's centre (the top one's is
+`outer_size` higher). Its masks are exactly those of two stacked square gates,
+but it is one gate: one detection, one mask and box, one instance label. Stands
+and bases are not modelled for any type. An unknown type is an error at load
+time.
 
 Keypoints are the frame's corners: the `_inner` ring, then the `_outer` ring,
 each clockwise in the image from the top flat's left end —
 `top_left, top_right, bottom_right, bottom_left` for a square,
 `top_left, top_right, right_top, right_bottom, bottom_right, bottom_left,
-left_bottom, left_top` for an octagon.
+left_bottom, left_top` for an octagon. A double gives its top square's corners
+then its bottom square's, prefixed `top_` / `bottom_`, each in square order but
+without the outer corners where the squares meet (the real frame is one piece
+there): `top_top_left_inner … top_bottom_left_inner, top_top_left_outer,
+top_top_right_outer`, then `bottom_top_left_inner … bottom_bottom_left_inner,
+bottom_bottom_right_outer, bottom_bottom_left_outer`.
 
 ## Output resolution
 

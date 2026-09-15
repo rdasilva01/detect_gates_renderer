@@ -63,6 +63,21 @@ CornerLayout cornerLayout(GateShape shape) {
     return {4, kSquareNames, kSquareFrontIndexMap, kSquareBackIndexMap};
 }
 
+// The frames a gate is made of for masks, instance labels and detections: the
+// gate itself, or a double's two squares, top first. The pose is the bottom
+// square's centre and the top square sits one outer size above it, so the two
+// are exactly two square gates stacked -- which is what their masks must be.
+std::vector<Gate> partsOf(const Gate& gate) {
+    if (gate.shape != GateShape::Double) {
+        return {gate};
+    }
+    Gate bottom = gate;
+    bottom.shape = GateShape::Square;
+    Gate top = bottom;
+    top.pose.z += gate.dims.outerSize;
+    return {top, bottom};
+}
+
 // Is the camera inside this gate's through-hole -- between the two apertures
 // and laterally within them? See `singleGateMask` for what it changes.
 bool cameraInAperture(const GatePose& gate, GateShape shape, const GateDims& gateDims,
@@ -163,9 +178,11 @@ std::map<std::string, Gate> loadGatesConfig(const std::string& path) {
         GateShape shape = GateShape::Square;
         if (type == "octagon") {
             shape = GateShape::Octagon;
+        } else if (type == "double") {
+            shape = GateShape::Double;
         } else if (type != "square") {
             throw std::runtime_error("gates_config: gate '" + name + "' has unknown type '" + type +
-                                     "' (known: square, octagon)");
+                                     "' (known: square, octagon, double)");
         }
 
         const YAML::Node& pose = gateNode["pose"];
@@ -254,30 +271,32 @@ cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dr
     };
 
     std::vector<GateFacesPx> gatesPx;
-    for (const auto& [name, gate] : gates) {
-        const GatePose& gatePose = gate.pose;
-        const GateDims& gateDims = gate.dims;
-        const GateFaces faces =
-            gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
-                      gateDims.innerSize, gateDims.thickness);
+    for (const auto& [name, entry] : gates) {
+        for (const Gate& gate : partsOf(entry)) {
+            const GatePose& gatePose = gate.pose;
+            const GateDims& gateDims = gate.dims;
+            const GateFaces faces =
+                gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
+                          gateDims.innerSize, gateDims.thickness);
 
-        GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
-        gatePx.outerFacesPx.reserve(faces.outerFaces.size());
-        for (const auto& face : faces.outerFaces) {
-            gatePx.outerFacesPx.push_back(projectFace(face));
+            GateFacesPx gatePx;
+            gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
+            gatePx.outerFacesPx.reserve(faces.outerFaces.size());
+            for (const auto& face : faces.outerFaces) {
+                gatePx.outerFacesPx.push_back(projectFace(face));
+            }
+
+            if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
+                continue;
+            }
+
+            gatePx.innerFacesPx.reserve(faces.innerFaces.size());
+            for (const auto& face : faces.innerFaces) {
+                gatePx.innerFacesPx.push_back(projectFace(face));
+            }
+
+            gatesPx.push_back(std::move(gatePx));
         }
-
-        if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
-            continue;
-        }
-
-        gatePx.innerFacesPx.reserve(faces.innerFaces.size());
-        for (const auto& face : faces.innerFaces) {
-            gatePx.innerFacesPx.push_back(projectFace(face));
-        }
-
-        gatesPx.push_back(std::move(gatePx));
     }
 
     return renderSegmentation(gatesPx, imageWidth, imageHeight);
@@ -453,42 +472,45 @@ cv::Mat renderInstancesAndCoverage(const std::map<std::string, Gate>& gates, con
     struct Painted {
         GateFacesPx px;
         uint8_t label = 0;
-        const Gate* gate = nullptr;
-        double distance = 0.0;  // camera to gate centre
+        Gate gate;              // the square or octagon frame painted (one of a double's squares)
+        double distance = 0.0;  // camera to that frame's centre
     };
     std::vector<Painted> painted;
     uint8_t label = 0;
-    for (const auto& [name, gate] : gates) {
-        const GatePose& gatePose = gate.pose;
-        const GateDims& gateDims = gate.dims;
+    for (const auto& [name, entry] : gates) {
         // Incremented for EVERY gate, including ones that fall off canvas, so a
         // label means the same gate whatever happens to be in view. A label
         // that shifted with visibility would silently rename gates between
-        // frames, which is precisely the identity this exists to provide.
+        // frames, which is precisely the identity this exists to provide. A
+        // double is one gate, so both its squares carry its one label.
         ++label;
-        const GateFaces faces =
-            gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
-                      gateDims.innerSize, gateDims.thickness);
+        for (const Gate& gate : partsOf(entry)) {
+            const GatePose& gatePose = gate.pose;
+            const GateDims& gateDims = gate.dims;
+            const GateFaces faces =
+                gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
+                          gateDims.innerSize, gateDims.thickness);
 
-        GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
-        gatePx.outerFacesPx.reserve(faces.outerFaces.size());
-        for (const auto& face : faces.outerFaces) {
-            gatePx.outerFacesPx.push_back(projectFace(face));
+            GateFacesPx gatePx;
+            gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
+            gatePx.outerFacesPx.reserve(faces.outerFaces.size());
+            for (const auto& face : faces.outerFaces) {
+                gatePx.outerFacesPx.push_back(projectFace(face));
+            }
+
+            if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
+                continue;
+            }
+
+            gatePx.innerFacesPx.reserve(faces.innerFaces.size());
+            for (const auto& face : faces.innerFaces) {
+                gatePx.innerFacesPx.push_back(projectFace(face));
+            }
+
+            const Eigen::Vector3d centreCam =
+                tCamWorld.R * Eigen::Vector3d(gatePose.x, gatePose.y, gatePose.z) + tCamWorld.t;
+            painted.push_back(Painted{std::move(gatePx), label, gate, centreCam.norm()});
         }
-
-        if (gateOffCanvas(gatePx, imageWidth, imageHeight)) {
-            continue;
-        }
-
-        gatePx.innerFacesPx.reserve(faces.innerFaces.size());
-        for (const auto& face : faces.innerFaces) {
-            gatePx.innerFacesPx.push_back(projectFace(face));
-        }
-
-        const Eigen::Vector3d centreCam =
-            tCamWorld.R * Eigen::Vector3d(gatePose.x, gatePose.y, gatePose.z) + tCamWorld.t;
-        painted.push_back(Painted{std::move(gatePx), label, &gate, centreCam.norm()});
     }
 
     // Each gate's silhouette is the one `renderPose` ORs in, so the union of
@@ -533,7 +555,7 @@ cv::Mat renderInstancesAndCoverage(const std::map<std::string, Gate>& gates, con
     std::vector<FrameSolid> solids;
     solids.reserve(painted.size());
     for (const auto& entry : painted) {
-        solids.push_back(frameSolid(*entry.gate));
+        solids.push_back(frameSolid(entry.gate));
     }
     for (size_t i = 0; i < contested.size(); ++i) {
         const cv::Point& p = contested[i];
@@ -710,22 +732,27 @@ std::vector<GateEdges> gateFaceEdges(const std::map<std::string, Gate>& gates, c
     // Every gate's frame, and a sphere around it, for hiding occluded stretches.
     std::vector<FrameSolid> solids;
     std::vector<double> radii;
-    for (const auto& [otherName, other] : gates) {
-        solids.push_back(frameSolid(other));
-        // Outer ring's circumradius squared over outerSize squared, as in detectGates' cull.
-        const double circumFactor = other.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
-        radii.push_back(std::sqrt(circumFactor * other.dims.outerSize * other.dims.outerSize +
-                                  0.25 * other.dims.thickness * other.dims.thickness));
+    for (const auto& [otherName, entry] : gates) {
+        for (const Gate& other : partsOf(entry)) {
+            solids.push_back(frameSolid(other));
+            // Outer ring's circumradius squared over outerSize squared, as in detectGates' cull.
+            const double circumFactor = other.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
+            radii.push_back(std::sqrt(circumFactor * other.dims.outerSize * other.dims.outerSize +
+                                      0.25 * other.dims.thickness * other.dims.thickness));
+        }
     }
 
     std::vector<GateEdges> result;
     for (const auto& [name, gate] : gates) {
+        // Drawn from the gate's real faces: a double is one frame with two
+        // apertures here, not two squares, so no line runs where they meet.
         const GatePose& gatePose = gate.pose;
         const GateDims& gateDims = gate.dims;
         const GateFaces faces = gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw,
                                            gateDims.outerSize, gateDims.innerSize, gateDims.thickness);
         const Eigen::Vector3d center(gatePose.x, gatePose.y, gatePose.z);
         const Eigen::Vector3d normal(std::cos(gatePose.yaw), std::sin(gatePose.yaw), 0.0);
+        const size_t apertures = faces.innerFaces.size() / 2;
 
         // A ring face is visible from outside its own plane; from between the
         // two planes (inside the frame's thickness) neither is.
@@ -734,31 +761,47 @@ std::vector<GateEdges> gateFaceEdges(const std::map<std::string, Gate>& gates, c
         if (along < -gateDims.thickness / 2.0 || along > gateDims.thickness / 2.0) {
             const int ring = along < 0.0 ? 0 : 1;  // front ring faces -normal, back ring +normal
             visible.push_back(faces.outerFaces[ring]);
-            visible.push_back(faces.innerFaces[ring]);
+            for (size_t a = 0; a < apertures; ++a) {
+                visible.push_back(faces.innerFaces[2 * a + ring]);
+            }
         }
         if (gateDims.thickness > 0.0) {
-            // A wall between ring corners a and b is visible when the camera is
-            // on the side it faces: away from the gate's axis for an outer wall,
-            // toward it for an inner one. The edge midpoint's radial direction is
-            // the wall's normal, the rings being regular polygons.
-            const auto facesCamera = [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b, bool outward) {
-                Eigen::Vector3d radial = 0.5 * (a + b) - center;
-                radial -= radial.dot(normal) * normal;
-                return (outward ? 1.0 : -1.0) * radial.dot(camPosWorld - a) > 0.0;
+            // A wall is visible when the camera is on the side it faces. Its
+            // normal is perpendicular to its edge and to the gate's axis, and
+            // points away from its ring's centre for an outer wall, toward it for
+            // an inner one -- true of any convex ring, a double's outline included.
+            const auto facesCamera = [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b,
+                                         const Eigen::Vector3d& ringCentre, bool outward) {
+                Eigen::Vector3d wallNormal = (b - a).cross(normal);
+                if (wallNormal.dot(0.5 * (a + b) - ringCentre) < 0.0) {
+                    wallNormal = -wallNormal;
+                }
+                return (outward ? 1.0 : -1.0) * wallNormal.dot(camPosWorld - a) > 0.0;
             };
+            const auto centroid = [](const Polygon3d& ring) {
+                Eigen::Vector3d sum = Eigen::Vector3d::Zero();
+                for (const auto& p : ring) {
+                    sum += p;
+                }
+                return Eigen::Vector3d(sum / static_cast<double>(ring.size()));
+            };
+            const Eigen::Vector3d outerCentre = centroid(faces.outerFaces[0]);
             for (size_t i = 2; i < faces.outerFaces.size(); ++i) {
                 const Polygon3d& wall = faces.outerFaces[i];  // {front[i], front[j], back[j], back[i]}
-                if (facesCamera(wall[0], wall[1], true)) {
+                if (facesCamera(wall[0], wall[1], outerCentre, true)) {
                     visible.push_back(wall);
                 }
             }
-            const Polygon3d& frontInner = faces.innerFaces[0];
-            const Polygon3d& backInner = faces.innerFaces[1];
-            const size_t n = frontInner.size();
-            for (size_t i = 0; i < n; ++i) {
-                const size_t j = (i + 1) % n;
-                if (facesCamera(frontInner[i], frontInner[j], false)) {
-                    visible.push_back(Polygon3d{frontInner[i], frontInner[j], backInner[j], backInner[i]});
+            for (size_t a = 0; a < apertures; ++a) {
+                const Polygon3d& frontInner = faces.innerFaces[2 * a];
+                const Polygon3d& backInner = faces.innerFaces[2 * a + 1];
+                const Eigen::Vector3d holeCentre = centroid(frontInner);
+                const size_t n = frontInner.size();
+                for (size_t i = 0; i < n; ++i) {
+                    const size_t j = (i + 1) % n;
+                    if (facesCamera(frontInner[i], frontInner[j], holeCentre, false)) {
+                        visible.push_back(Polygon3d{frontInner[i], frontInner[j], backInner[j], backInner[i]});
+                    }
                 }
             }
         }
@@ -835,107 +878,147 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
     }
 
     std::vector<Candidate> candidates;
-    for (const auto& [name, gate] : gates) {
-        const GatePose& gatePose = gate.pose;
-        const GateDims& gateDims = gate.dims;
-        const GateFaces faces = gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw,
-                                           gateDims.outerSize, gateDims.innerSize, gateDims.thickness);
-
-        const Eigen::Vector3d center(gatePose.x, gatePose.y, gatePose.z);
-        const Eigen::Vector3d normal(std::cos(gatePose.yaw), std::sin(gatePose.yaw), 0.0);
-        const bool front = normal.dot(camPosWorld - center) < 0.0;
-
-        const Polygon3d& outerFace = front ? faces.outerFaces[0] : faces.outerFaces[1];
-        const Polygon3d& innerFace = front ? faces.innerFaces[0] : faces.innerFaces[1];
-        const CornerLayout layout = cornerLayout(gate.shape);
-        const int n = layout.count;
-        const int* indexMap = front ? layout.frontIndexMap : layout.backIndexMap;
-
-        // Canonical order: n inner corners, then n outer corners.
-        Polygon3d cornersWorld;
-        cornersWorld.reserve(2 * n);
-        for (int i = 0; i < n; ++i) {
-            cornersWorld.push_back(innerFace[indexMap[i]]);
-        }
-        for (int i = 0; i < n; ++i) {
-            cornersWorld.push_back(outerFace[indexMap[i]]);
-        }
-
-        const Polygon3d cornersCam = toCameraFrame(cornersWorld, tCamWorld);
-        const std::vector<cv::Point2d> projected = projectPoints(cornersCam, cameraMatrix, distCoeffs, fisheye);
+    for (const auto& [name, entry] : gates) {
+        // One candidate per configured gate. A double is built from its two
+        // squares, top first, leaving out the outer corners where they meet --
+        // the top square's bottom_*_outer and the bottom square's top_*_outer --
+        // because the real frame is one piece there and has no such corners.
+        const std::vector<Gate> parts = partsOf(entry);
+        const bool isDouble = entry.shape == GateShape::Double;
 
         Candidate cand;
         cand.gateName = name;
-        cand.keypoints.resize(2 * n);
-        cand.camPoints.resize(2 * n);
-        // Outer corners (indices n..n+2) are coplanar with the inner ones by
-        // construction (gateFaces() builds both from the same front/back
-        // center using the same lateral/vertical axes), so this plane
-        // describes the whole near face.
-        cand.faceNormalCam =
-            (cornersCam[n + 1] - cornersCam[n]).cross(cornersCam[n + 2] - cornersCam[n]).normalized();
-        cand.faceOffsetCam = cand.faceNormalCam.dot(cornersCam[n]);
-
+        std::vector<GateFaces> partFaces;
+        partFaces.reserve(parts.size());
         double depthSum = 0.0;
         int visibleCount = 0;
-        for (int i = 0; i < 2 * n; ++i) {
-            const Eigen::Vector3d& p = cornersCam[i];
-            const double theta = std::acos(p.z() / p.norm());
-            const bool inCone = theta < thetaMax;
-            const bool inBounds = projected[i].x >= 0 && projected[i].x < imageWidth && projected[i].y >= 0 &&
-                                   projected[i].y < imageHeight;
-            const bool visible = inCone && inBounds;
+        for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+            const Gate& gate = parts[partIndex];
+            const GatePose& gatePose = gate.pose;
+            const GateDims& gateDims = gate.dims;
+            partFaces.push_back(gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw,
+                                          gateDims.outerSize, gateDims.innerSize, gateDims.thickness));
+            const GateFaces& faces = partFaces.back();
 
-            const std::string suffix = i < n ? "_inner" : "_outer";
-            cand.keypoints[i] = Keypoint{layout.names[i % n] + suffix, projected[i].x, projected[i].y, visible,
-                                          /*inFrustum=*/visible};
-            cand.camPoints[i] = p;
-            if (visible) {
-                ++visibleCount;
+            const Eigen::Vector3d center(gatePose.x, gatePose.y, gatePose.z);
+            const Eigen::Vector3d normal(std::cos(gatePose.yaw), std::sin(gatePose.yaw), 0.0);
+            const bool front = normal.dot(camPosWorld - center) < 0.0;
+
+            const Polygon3d& outerFace = front ? faces.outerFaces[0] : faces.outerFaces[1];
+            const Polygon3d& innerFace = front ? faces.innerFaces[0] : faces.innerFaces[1];
+            const CornerLayout layout = cornerLayout(gate.shape);
+            const int n = layout.count;
+            const int* indexMap = front ? layout.frontIndexMap : layout.backIndexMap;
+
+            // Canonical order: n inner corners, then n outer corners.
+            Polygon3d cornersWorld;
+            cornersWorld.reserve(2 * n);
+            for (int i = 0; i < n; ++i) {
+                cornersWorld.push_back(innerFace[indexMap[i]]);
             }
-            depthSum += p.z();
+            for (int i = 0; i < n; ++i) {
+                cornersWorld.push_back(outerFace[indexMap[i]]);
+            }
+
+            const Polygon3d cornersCam = toCameraFrame(cornersWorld, tCamWorld);
+            const std::vector<cv::Point2d> projected = projectPoints(cornersCam, cameraMatrix, distCoeffs, fisheye);
+
+            if (partIndex == 0) {
+                // Outer corners (indices n..n+2) are coplanar with the inner ones by
+                // construction (gateFaces() builds both from the same front/back
+                // center using the same lateral/vertical axes), so this plane
+                // describes the whole near face -- a double's two squares share it.
+                cand.faceNormalCam =
+                    (cornersCam[n + 1] - cornersCam[n]).cross(cornersCam[n + 2] - cornersCam[n]).normalized();
+                cand.faceOffsetCam = cand.faceNormalCam.dot(cornersCam[n]);
+            }
+
+            const std::string prefix = !isDouble ? "" : partIndex == 0 ? "top_" : "bottom_";
+            for (int i = 0; i < 2 * n; ++i) {
+                if (isDouble && i >= n) {
+                    const bool bottomCorner = std::string(layout.names[i % n]).rfind("bottom", 0) == 0;
+                    if (bottomCorner == (partIndex == 0)) {
+                        continue;  // an outer corner where the two squares meet
+                    }
+                }
+                const Eigen::Vector3d& p = cornersCam[i];
+                const double theta = std::acos(p.z() / p.norm());
+                const bool inCone = theta < thetaMax;
+                const bool inBounds = projected[i].x >= 0 && projected[i].x < imageWidth && projected[i].y >= 0 &&
+                                       projected[i].y < imageHeight;
+                const bool visible = inCone && inBounds;
+
+                const std::string suffix = i < n ? "_inner" : "_outer";
+                cand.keypoints.push_back(Keypoint{prefix + layout.names[i % n] + suffix, projected[i].x,
+                                                  projected[i].y, visible, /*inFrustum=*/visible});
+                cand.camPoints.push_back(p);
+                if (visible) {
+                    ++visibleCount;
+                }
+                depthSum += p.z();
+            }
         }
         if (visibleCount < minVisibleCorners) {
             continue;
         }
         if (canCull) {
-            // Outer ring's circumradius squared, over outerSize squared: a
-            // square's half-diagonal, an octagon's 1 / (2 + sqrt 2).
-            const double circumFactor = gate.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
-            const double gateRadius = std::sqrt(circumFactor * gateDims.outerSize * gateDims.outerSize +
-                                                0.25 * gateDims.thickness * gateDims.thickness);
-            const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
-            const double dist = centerCam.norm();
-            if (dist > gateRadius &&
-                std::atan2(std::hypot(centerCam.x(), centerCam.y()), centerCam.z()) -
-                        std::asin(gateRadius / dist) >
-                    thetaMax) {
+            // Skipped only when every frame of the gate is out of view.
+            bool inView = false;
+            for (const Gate& gate : parts) {
+                const GateDims& gateDims = gate.dims;
+                const Eigen::Vector3d center(gate.pose.x, gate.pose.y, gate.pose.z);
+                // Outer ring's circumradius squared, over outerSize squared: a
+                // square's half-diagonal, an octagon's 1 / (2 + sqrt 2).
+                const double circumFactor = gate.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
+                const double gateRadius = std::sqrt(circumFactor * gateDims.outerSize * gateDims.outerSize +
+                                                    0.25 * gateDims.thickness * gateDims.thickness);
+                const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
+                const double dist = centerCam.norm();
+                if (!(dist > gateRadius &&
+                      std::atan2(std::hypot(centerCam.x(), centerCam.y()), centerCam.z()) -
+                              std::asin(gateRadius / dist) >
+                          thetaMax)) {
+                    inView = true;
+                    break;
+                }
+            }
+            if (!inView) {
                 continue;
             }
         }
 
         // This gate's full rendered silhouette (all outer faces OR-ed minus
         // all inner faces AND-ed, subdivided + cone-clipped) -- identical to
-        // what `renderPose` would draw for this gate alone. Used below so
-        // occlusion tests against the true curved/extruded shape rather
-        // than a straight-line approximation of just the near face.
-        GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, camPosWorld);
-        gatePx.outerFacesPx.reserve(faces.outerFaces.size());
-        for (const auto& face : faces.outerFaces) {
-            gatePx.outerFacesPx.push_back(
-                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
-                                    imageHeight));
+        // what `renderPose` would draw for this gate alone, and for a double
+        // the union of its squares'. Used below so occlusion tests against the
+        // true curved/extruded shape rather than a straight-line approximation
+        // of just the near face.
+        for (size_t partIndex = 0; partIndex < parts.size(); ++partIndex) {
+            const Gate& gate = parts[partIndex];
+            const GateFaces& faces = partFaces[partIndex];
+            GateFacesPx gatePx;
+            gatePx.cameraInAperture = cameraInAperture(gate.pose, gate.shape, gate.dims, camPosWorld);
+            gatePx.outerFacesPx.reserve(faces.outerFaces.size());
+            for (const auto& face : faces.outerFaces) {
+                gatePx.outerFacesPx.push_back(
+                    projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                        imageHeight));
+            }
+            gatePx.innerFacesPx.reserve(faces.innerFaces.size());
+            for (const auto& face : faces.innerFaces) {
+                gatePx.innerFacesPx.push_back(
+                    projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
+                                        imageHeight));
+            }
+            const cv::Mat partMask = singleGateMask(gatePx, imageWidth, imageHeight);
+            if (partIndex == 0) {
+                cand.footprint = partMask;
+            } else {
+                cv::bitwise_or(cand.footprint, partMask, cand.footprint);
+            }
         }
-        gatePx.innerFacesPx.reserve(faces.innerFaces.size());
-        for (const auto& face : faces.innerFaces) {
-            gatePx.innerFacesPx.push_back(
-                projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye, imageWidth,
-                                    imageHeight));
-        }
-        cand.footprint = singleGateMask(gatePx, imageWidth, imageHeight);
 
-        cand.depth = depthSum / (2.0 * n);
+        cand.depth = depthSum / static_cast<double>(cand.keypoints.size());
         candidates.push_back(std::move(cand));
     }
 

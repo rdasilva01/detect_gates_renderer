@@ -14,13 +14,16 @@ using Polygon3d = std::vector<Eigen::Vector3d>;
 //
 // Square: sides of `size`. Octagon: regular, its flats on the gate's lateral
 // and vertical axes, `size` across flats -- so both fit the same size x size
-// box.
-enum class GateShape { Square, Octagon };
+// box. Double: two squares, the second directly on top of the first, with
+// (x, y, z) the bottom one's centre; its faces are the real one-piece frame, a
+// size x 2 * size outline with two apertures. (Masks and detections instead
+// treat a double as its two squares; see scene.cpp.)
+enum class GateShape { Square, Octagon, Double };
 
 struct GateFaces {
     // Outer box: front outer ring, back outer ring, then one side wall per ring edge.
     std::vector<Polygon3d> outerFaces;
-    // Front/back inner rings bounding the through-hole.
+    // Front/back inner rings bounding each through-hole, a pair per aperture.
     std::vector<Polygon3d> innerFaces;
 };
 
