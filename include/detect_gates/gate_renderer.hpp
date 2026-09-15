@@ -16,7 +16,8 @@ namespace detect_gates {
 // config files on every call.
 class GateRenderer {
 public:
-    // `droneConfigPath` only needs to provide `gate_dimensions`; each
+    // `gatesConfigPath` gives each gate's type, pose and dimensions.
+    // `droneConfigPath` only holds the optional output settings; each
     // `render()` call supplies its own pose.
     //
     // `cameraConfigPath`'s `distortion_model` field ("fisheye"/"equidistant"
@@ -98,8 +99,7 @@ public:
     int imageHeight() const { return outputHeight_; }
 
 private:
-    std::map<std::string, GatePose> gates_;
-    GateDims gateDims_;
+    std::map<std::string, Gate> gates_;
     Transform tBaseCam_;
     cv::Mat cameraMatrix_;
     cv::Mat distCoeffs_;

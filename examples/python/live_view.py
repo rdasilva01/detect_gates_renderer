@@ -17,7 +17,7 @@ applied in the drone's current body frame):
   Space             : toggle rectified (pinhole) vs. raw fisheye view
   Esc               : quit
 
-The mask is upscaled to --display-size (default 820x616) for viewing only, so
+The mask is upscaled to --display-size (default 640x640) for viewing only, so
 that a renderer configured for small masks -- config.yaml's output_width /
 output_height, e.g. 64x64 -- still gives a window big enough to read the
 overlay and text on. Nothing rendered or measured is affected; the mask really
@@ -191,8 +191,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roll", type=float, default=0.0)
     parser.add_argument("--pitch", type=float, default=0.0)
     parser.add_argument("--yaw", type=float, default=3.13)
-    parser.add_argument("--display-size", type=parse_size, default=(820, 616), metavar="WxH",
-                         help="upscale the mask to this size for viewing only (default: 820x616). "
+    parser.add_argument("--display-size", type=parse_size, default=(640, 640), metavar="WxH",
+                         help="upscale the mask to this size for viewing only (default: 640x640). "
                               "Masks already this size or larger are shown untouched.")
     parser.add_argument("--debug-keys", action="store_true",
                          help="print every key code received, to help map unrecognized arrow keys")
