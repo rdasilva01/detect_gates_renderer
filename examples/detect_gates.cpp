@@ -3,8 +3,8 @@
 // Given a gates layout, a drone pose, and a camera calibration:
 // --mode segment (default) renders a grayscale PNG (0 = background,
 // 255 = gate frame) of what the drone's camera would see from that pose.
-// --mode pose instead writes a JSON array of per-gate keypoint (4 inner +
-// 4 outer corner) and bounding-box detections, with cross-gate occlusion
+// --mode pose instead writes a JSON array of per-gate keypoint (inner +
+// outer corner) and bounding-box detections, with cross-gate occlusion
 // handling.
 #include <fstream>
 #include <iostream>

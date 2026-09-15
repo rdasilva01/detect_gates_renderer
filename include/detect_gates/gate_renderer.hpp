@@ -16,7 +16,8 @@ namespace detect_gates {
 // config files on every call.
 class GateRenderer {
 public:
-    // `droneConfigPath` only needs to provide `gate_dimensions`; each
+    // `gatesConfigPath` gives each gate's type, pose and dimensions.
+    // `droneConfigPath` only holds the optional output settings; each
     // `render()` call supplies its own pose.
     //
     // `cameraConfigPath`'s `distortion_model` field ("fisheye"/"equidistant"
@@ -88,9 +89,13 @@ public:
     // Detect per-gate keypoints/bounding boxes for a pose instead of a mask.
     // See `detectGates()` in scene.hpp for the algorithm. Coordinates are in
     // output-resolution pixels, so they line up with `render()`'s mask.
-    std::vector<GateDetection> renderDetections(const DronePose& pose, int minVisibleCorners = 3) const;
+    std::vector<GateDetection> renderDetections(const DronePose& pose, int minVisibleCorners = 0) const;
     std::vector<GateDetection> renderDetections(double x, double y, double z, double roll, double pitch, double yaw,
-                                                 int minVisibleCorners = 3) const;
+                                                 int minVisibleCorners = 0) const;
+
+    // Visible face edges of every gate, for drawing over a mask -- see
+    // `GateEdges` in scene.hpp. In output-resolution pixels, like the detections.
+    std::vector<GateEdges> renderFaceEdges(const DronePose& pose) const;
 
     // Size of what `render()` hands back: config.yaml's `output_width` /
     // `output_height` if set, else the camera calibration's resolution.
@@ -98,8 +103,7 @@ public:
     int imageHeight() const { return outputHeight_; }
 
 private:
-    std::map<std::string, GatePose> gates_;
-    GateDims gateDims_;
+    std::map<std::string, Gate> gates_;
     Transform tBaseCam_;
     cv::Mat cameraMatrix_;
     cv::Mat distCoeffs_;
