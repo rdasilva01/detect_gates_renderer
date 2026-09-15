@@ -9,8 +9,8 @@
 # vertically (9.6x). That is fine as long as the real camera images are resized
 # the same way -- but if you letterbox or crop those, do the same to the mask or
 # the two will not line up.
-output_width: 64
-output_height: 64
+output_width: 640
+output_height: 640
 
 # How the mask is resampled from the render resolution down to the output
 # resolution: nearest | linear | area. Ignored when native_inter is true.

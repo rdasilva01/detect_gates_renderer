@@ -6,56 +6,56 @@ gates:
   gate01:
     type: square
     pose: [12.00, 4.00, 1.45, 3.1416]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate02:
     type: square
     pose: [5.00, 10.00, 1.45, 1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate03:
     type: octagon
     pose: [8.00, 15.00, 1.45, 1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
   gate04:
     type: square
     pose: [8.00, 22.00, 1.45, 1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate05:
     type: square
     pose: [5.30, 22.00, 1.45, 1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate06:
     type: octagon
     pose: [6.00, 30.00, 1.45, 1.0472]
-    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
   gate07:
     type: square
     pose: [12.00, 34.00, 1.45, 0.0000]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate08:
     type: octagon
     pose: [18.00, 28.00, 1.45, 0.0000]
-    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
   gate09_d:
     type: square
     pose: [24.00, 33.00, 1.45, 1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate09_u:
     type: square
     pose: [24.00, 33.00, 4.15, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate10_u:
     type: square
     pose: [24.00, 24.00, 4.15, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate10_d:
     type: square
     pose: [24.00, 24.00, 1.45, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.7, thickness: 0.45}
   gate11:
     type: octagon
     pose: [24.00, 16.00, 1.45, -1.5708]
-    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
   gate12:
     type: octagon
     pose: [22.00, 8.00, 1.45, -2.0944]
-    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.15}
+    dimensions: {outer_size: 2.7, inner_size: 1.9, thickness: 0.45}
