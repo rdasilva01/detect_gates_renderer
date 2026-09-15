@@ -183,13 +183,45 @@ cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dr
 // name, which is what `gateNames()` returns). Pixel-for-pixel consistent with
 // `renderPose`, because both rasterize the same per-gate silhouettes.
 //
-// Where two gates overlap the nearer one owns the pixel, resolved by mean
-// camera-frame depth of the gate centre. `renderPose` needs no such rule: it
-// OR-s, and OR does not care who contributed.
+// Where two gates overlap the nearer one owns the pixel, resolved per pixel:
+// the pixel's ray is cast against each covering gate's frame and the first
+// hit wins. `renderPose` needs no such rule: it OR-s, and OR does not care who
+// contributed.
 cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
                              const Transform& tBaseCam, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
                              int imageWidth, int imageHeight, bool fisheye = true,
                              double thetaMax = 89.0 * CV_PI / 180.0);
+
+// `renderPose` and `renderPoseInstances` for the same pose in one call: the
+// same two masks byte for byte, but each gate is projected and rasterized once
+// instead of once per mask.
+struct SceneSegmentation {
+    cv::Mat coverage;
+    cv::Mat instances;
+};
+SceneSegmentation renderPoseSegmented(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                      const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                      const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
+                                      bool fisheye = true, double thetaMax = 89.0 * CV_PI / 180.0);
+
+// One gate's visible face edges, for drawing: the outlines of the faces turned
+// toward the camera -- the near ring's outer edge and aperture, and whichever
+// outer and inner walls face the camera -- as open polylines in pixels, with
+// every stretch that something hides removed: behind a nearer gate, or behind
+// the gate's own front ring (a far inner wall seen at a steep angle). Hiding
+// is decided per sample, by casting its ray against every gate's frame.
+struct GateEdges {
+    std::string gate;
+    std::vector<std::vector<cv::Point2d>> polylines;
+};
+
+// Visible face edges of every gate seen from `dronePos` (see `GateEdges`).
+// Faces whose image wraps behind the camera (`FacePixels::inverted`) are left
+// out, as are outline segments that only trace the image border.
+std::vector<GateEdges> gateFaceEdges(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                      const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                      const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
+                                      bool fisheye = true, double thetaMax = 89.0 * CV_PI / 180.0);
 
 // Detect per-gate keypoints (inner + outer frame corners, see
 // `GateDetection::keypoints`) and bounding boxes as seen from `dronePos`, with
@@ -200,6 +232,6 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
                                         const Transform& tBaseCam, const cv::Mat& cameraMatrix,
                                         const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
                                         bool fisheye = true, double thetaMax = 89.0 * CV_PI / 180.0,
-                                        int minVisibleCorners = 3);
+                                        int minVisibleCorners = 0);
 
 }  // namespace detect_gates

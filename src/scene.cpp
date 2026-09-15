@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <Eigen/Geometry>
+#include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>
 #include <yaml-cpp/yaml.h>
 
@@ -282,9 +283,163 @@ cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dr
     return renderSegmentation(gatesPx, imageWidth, imageHeight);
 }
 
-cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
-                             const Transform& tBaseCam, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
-                             int imageWidth, int imageHeight, bool fisheye, double thetaMax) {
+namespace {
+
+// Unit camera-frame ray through each pixel position, inverting exactly the
+// projection the rasterizer used: the full-range equidistant model for a
+// fisheye (so theta may pass 90 deg), `cv::undistortPoints` for a pinhole.
+std::vector<Eigen::Vector3d> pixelRays(const std::vector<cv::Point2d>& pixels, const cv::Mat& cameraMatrix,
+                                       const cv::Mat& distCoeffs, bool fisheye) {
+    std::vector<Eigen::Vector3d> rays;
+    rays.reserve(pixels.size());
+    if (!fisheye) {
+        std::vector<cv::Point2d> normalized;
+        cv::undistortPoints(pixels, normalized, cameraMatrix, distCoeffs);
+        for (const auto& q : normalized) {
+            rays.push_back(Eigen::Vector3d(q.x, q.y, 1.0).normalized());
+        }
+        return rays;
+    }
+    const double fx = cameraMatrix.at<double>(0, 0), fy = cameraMatrix.at<double>(1, 1);
+    const double cx = cameraMatrix.at<double>(0, 2), cy = cameraMatrix.at<double>(1, 2);
+    std::array<double, 4> k{0.0, 0.0, 0.0, 0.0};
+    for (int i = 0; i < std::min(4, static_cast<int>(distCoeffs.total())); ++i) {
+        k[i] = distCoeffs.at<double>(i);
+    }
+    for (const auto& px : pixels) {
+        const double mx = (px.x - cx) / fx, my = (px.y - cy) / fy;
+        const double thetaD = std::hypot(mx, my);
+        // Invert theta_d(theta) by Newton, as `fisheyeThetaMax` does.
+        double theta = thetaD;
+        for (int i = 0; i < 20; ++i) {
+            const double t2 = theta * theta;
+            const double f = theta * (1.0 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3])))) - thetaD;
+            const double df = 1.0 + t2 * (3.0 * k[0] + t2 * (5.0 * k[1] + t2 * (7.0 * k[2] + t2 * 9.0 * k[3])));
+            if (std::abs(df) < 1e-12) {
+                break;
+            }
+            const double step = f / df;
+            theta -= step;
+            if (std::abs(step) < 1e-12) {
+                break;
+            }
+        }
+        theta = std::clamp(theta, 0.0, CV_PI);
+        if (thetaD < 1e-12) {
+            rays.emplace_back(0.0, 0.0, 1.0);
+        } else {
+            const double s = std::sin(theta) / thetaD;
+            rays.emplace_back(s * mx, s * my, std::cos(theta));
+        }
+    }
+    return rays;
+}
+
+// A gate's frame solid -- the slab |along| <= thickness / 2, inside the outer
+// ring and outside the inner one -- set up for intersecting rays with. Rings
+// are half-planes a*u + b*v <= c over (u, v) = (lateral, vertical) offsets.
+struct FrameSolid {
+    Eigen::Vector3d center, normal, lateral;
+    double halfThickness = 0.0;
+    std::vector<std::array<double, 3>> outer, inner;
+};
+
+std::vector<std::array<double, 3>> ringHalfPlanes(GateShape shape, double halfSize) {
+    std::vector<std::array<double, 3>> planes = {
+        {1.0, 0.0, halfSize}, {-1.0, 0.0, halfSize}, {0.0, 1.0, halfSize}, {0.0, -1.0, halfSize}};
+    if (shape == GateShape::Octagon) {
+        const double diagonal = halfSize * std::sqrt(2.0);  // the cut corners: |u| + |v| <= h * sqrt 2
+        for (double a : {-1.0, 1.0}) {
+            for (double b : {-1.0, 1.0}) {
+                planes.push_back({a, b, diagonal});
+            }
+        }
+    }
+    return planes;
+}
+
+FrameSolid frameSolid(const Gate& gate) {
+    FrameSolid solid;
+    solid.center = Eigen::Vector3d(gate.pose.x, gate.pose.y, gate.pose.z);
+    solid.normal = Eigen::Vector3d(std::cos(gate.pose.yaw), std::sin(gate.pose.yaw), 0.0);
+    solid.lateral = Eigen::Vector3d(-std::sin(gate.pose.yaw), std::cos(gate.pose.yaw), 0.0);
+    solid.halfThickness = gate.dims.thickness / 2.0;
+    solid.outer = ringHalfPlanes(gate.shape, gate.dims.outerSize / 2.0);
+    solid.inner = ringHalfPlanes(gate.shape, gate.dims.innerSize / 2.0);
+    return solid;
+}
+
+// Narrow [lo, hi] to where the 2D line p + s * d lies inside the half-planes.
+// False if nothing is left.
+bool clipToRing(double pu, double pv, double du, double dv, const std::vector<std::array<double, 3>>& planes,
+                double& lo, double& hi) {
+    for (const auto& [a, b, c] : planes) {
+        const double slack = c - (a * pu + b * pv);
+        const double rate = a * du + b * dv;
+        if (std::abs(rate) < 1e-15) {
+            if (slack < 0.0) {
+                return false;
+            }
+            continue;
+        }
+        const double s = slack / rate;
+        if (rate > 0.0) {
+            hi = std::min(hi, s);
+        } else {
+            lo = std::max(lo, s);
+        }
+        if (lo > hi) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Distance along the unit ray (origin, dir) to its first point inside the
+// frame solid, or infinity if it misses. Exact: the ray is linear in (u, v)
+// across the slab, so it is inside the outer ring over one interval and inside
+// the aperture over another, and the first hit is where the former starts
+// unless the latter already covers that.
+double firstHit(const FrameSolid& solid, const Eigen::Vector3d& origin, const Eigen::Vector3d& dir) {
+    const double infinity = std::numeric_limits<double>::infinity();
+    const Eigen::Vector3d offset = origin - solid.center;
+    const double along = offset.dot(solid.normal);
+    const double rate = dir.dot(solid.normal);
+    double s0 = 0.0, s1 = infinity;
+    if (std::abs(rate) > 1e-15) {
+        double enter = (-solid.halfThickness - along) / rate, leave = (solid.halfThickness - along) / rate;
+        if (enter > leave) {
+            std::swap(enter, leave);
+        }
+        s0 = std::max(enter, 0.0);
+        s1 = leave;
+    } else if (std::abs(along) > solid.halfThickness) {
+        return infinity;
+    }
+    if (s1 < s0) {
+        return infinity;
+    }
+    const double pu = offset.dot(solid.lateral), pv = offset.z();
+    const double du = dir.dot(solid.lateral), dv = dir.z();
+    double inOuterFrom = s0, inOuterTo = s1;
+    if (!clipToRing(pu, pv, du, dv, solid.outer, inOuterFrom, inOuterTo)) {
+        return infinity;
+    }
+    double inHoleFrom = s0, inHoleTo = s1;
+    const bool throughHole = clipToRing(pu, pv, du, dv, solid.inner, inHoleFrom, inHoleTo);
+    if (!throughHole || inOuterFrom < inHoleFrom || inOuterFrom > inHoleTo) {
+        return inOuterFrom;
+    }
+    return inHoleTo < inOuterTo ? inHoleTo : infinity;
+}
+
+// Instance labels for a pose and, if `coverage` is given, the semantic mask
+// too. Both come from the same per-gate silhouettes, so a caller that wants the
+// pair gets each gate projected and rasterized once rather than twice.
+cv::Mat renderInstancesAndCoverage(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                   const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                   const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                                   double thetaMax, cv::Mat* coverage) {
     const Transform tWorldBase =
         poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
     const Transform tWorldCam = compose(tWorldBase, tBaseCam);
@@ -298,7 +453,8 @@ cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const Dron
     struct Painted {
         GateFacesPx px;
         uint8_t label = 0;
-        double depth = 0.0;
+        const Gate* gate = nullptr;
+        double distance = 0.0;  // camera to gate centre
     };
     std::vector<Painted> painted;
     uint8_t label = 0;
@@ -332,22 +488,299 @@ cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const Dron
 
         const Eigen::Vector3d centreCam =
             tCamWorld.R * Eigen::Vector3d(gatePose.x, gatePose.y, gatePose.z) + tCamWorld.t;
-        painted.push_back(Painted{std::move(gatePx), label, centreCam.z()});
+        painted.push_back(Painted{std::move(gatePx), label, &gate, centreCam.norm()});
     }
 
-    // Far to near, so the nearer gate is painted last and owns the overlap.
-    std::sort(painted.begin(), painted.end(),
-              [](const Painted& a, const Painted& b) { return a.depth > b.depth; });
-
-    std::vector<GateFacesPx> gatesPx;
-    std::vector<uint8_t> labels;
-    gatesPx.reserve(painted.size());
-    labels.reserve(painted.size());
-    for (auto& entry : painted) {
-        gatesPx.push_back(std::move(entry.px));
-        labels.push_back(entry.label);
+    // Each gate's silhouette is the one `renderPose` ORs in, so the union of
+    // owned pixels matches it exactly; only who owns a pixel is decided below.
+    cv::Mat canvas = cv::Mat::zeros(imageHeight, imageWidth, CV_8UC1);
+    cv::Mat coverCount = cv::Mat::zeros(imageHeight, imageWidth, CV_8UC1);
+    if (coverage != nullptr) {
+        *coverage = cv::Mat::zeros(imageHeight, imageWidth, CV_8UC1);
     }
-    return renderInstances(gatesPx, labels, imageWidth, imageHeight);
+    std::vector<cv::Mat> footprints;
+    footprints.reserve(painted.size());
+    for (const auto& entry : painted) {
+        footprints.push_back(singleGateMask(entry.px, imageWidth, imageHeight));
+        canvas.setTo(cv::Scalar(entry.label), footprints.back());
+        cv::add(coverCount, cv::Scalar(1), coverCount, footprints.back());
+        if (coverage != nullptr) {
+            // Exactly what `renderSegmentation` does with the same silhouettes.
+            cv::bitwise_or(*coverage, footprints.back(), *coverage);
+        }
+    }
+
+    // **Where silhouettes overlap, ownership is decided per pixel, not per
+    // gate.** Ordering whole gates by one depth each -- their centres' -- is
+    // wrong for gates that are large, close and touching: which one is in
+    // front changes across the overlap, and a small tilt reorders the centres
+    // and hands the whole overlap to the other gate (measured: 12.8% of
+    // overlapping pixels owned wrongly on fisheye, 12.4% rectified, 2.5% even
+    // ordering by centre distance). Instead the pixel's own ray is cast against
+    // each covering gate's frame solid and the first hit wins. Overlaps are a
+    // small part of the image, so this is cheap.
+    std::vector<cv::Point> contested;
+    cv::findNonZero(coverCount > 1, contested);
+    if (contested.empty()) {
+        return canvas;
+    }
+    std::vector<cv::Point2d> centres;
+    centres.reserve(contested.size());
+    for (const auto& p : contested) {
+        centres.emplace_back(p.x + 0.5, p.y + 0.5);
+    }
+    const std::vector<Eigen::Vector3d> rays = pixelRays(centres, cameraMatrix, distCoeffs, fisheye);
+    std::vector<FrameSolid> solids;
+    solids.reserve(painted.size());
+    for (const auto& entry : painted) {
+        solids.push_back(frameSolid(*entry.gate));
+    }
+    for (size_t i = 0; i < contested.size(); ++i) {
+        const cv::Point& p = contested[i];
+        const Eigen::Vector3d dirWorld = tWorldCam.R * rays[i];
+        double nearestHit = std::numeric_limits<double>::infinity();
+        double nearestCentre = std::numeric_limits<double>::infinity();
+        uint8_t owner = 0, fallback = 0;
+        for (size_t g = 0; g < painted.size(); ++g) {
+            if (footprints[g].at<uint8_t>(p) == 0) {
+                continue;
+            }
+            const double hit = firstHit(solids[g], tWorldCam.t, dirWorld);
+            if (hit < nearestHit) {
+                nearestHit = hit;
+                owner = painted[g].label;
+            }
+            if (painted[g].distance < nearestCentre) {
+                nearestCentre = painted[g].distance;
+                fallback = painted[g].label;
+            }
+        }
+        // No hit at all is the rasterizer's fringe, a pixel whose centre just
+        // misses every frame: give it to the nearest gate centre.
+        canvas.at<uint8_t>(p) = owner != 0 ? owner : fallback;
+    }
+    return canvas;
+}
+
+}  // namespace
+
+cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                             const Transform& tBaseCam, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
+                             int imageWidth, int imageHeight, bool fisheye, double thetaMax) {
+    return renderInstancesAndCoverage(gates, dronePos, tBaseCam, cameraMatrix, distCoeffs, imageWidth, imageHeight,
+                                      fisheye, thetaMax, nullptr);
+}
+
+SceneSegmentation renderPoseSegmented(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                      const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                      const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                                      double thetaMax) {
+    SceneSegmentation out;
+    out.instances = renderInstancesAndCoverage(gates, dronePos, tBaseCam, cameraMatrix, distCoeffs, imageWidth,
+                                               imageHeight, fisheye, thetaMax, &out.coverage);
+    return out;
+}
+
+namespace {
+
+// A face outline as the polylines worth drawing. The pinhole path clips
+// outlines to the image rectangle, which adds segments running along the
+// border; those are not edges of the gate, so the outline is cut there.
+std::vector<std::vector<cv::Point2d>> outlineEdges(const FacePixels& face, int imageWidth, int imageHeight) {
+    std::vector<std::vector<cv::Point2d>> runs;
+    const std::vector<cv::Point2d>& pts = face.points;
+    const size_t n = pts.size();
+    if (face.inverted || n < 2) {
+        return runs;
+    }
+    const auto onBorder = [&](const cv::Point2d& a, const cv::Point2d& b) {
+        const auto both = [](double u, double v, double edge) {
+            return std::abs(u - edge) < 1e-6 && std::abs(v - edge) < 1e-6;
+        };
+        return both(a.x, b.x, 0.0) || both(a.x, b.x, imageWidth) || both(a.y, b.y, 0.0) ||
+               both(a.y, b.y, imageHeight);
+    };
+    // Start right after a border segment, if any, so no run is split across the wrap.
+    size_t start = 0;
+    for (size_t i = 0; i < n; ++i) {
+        if (onBorder(pts[i], pts[(i + 1) % n])) {
+            start = (i + 1) % n;
+            break;
+        }
+    }
+    std::vector<cv::Point2d> run;
+    for (size_t k = 0; k < n; ++k) {
+        const cv::Point2d& a = pts[(start + k) % n];
+        const cv::Point2d& b = pts[(start + k + 1) % n];
+        if (onBorder(a, b)) {
+            if (run.size() >= 2 && !offCanvas(run, imageWidth, imageHeight)) {
+                runs.push_back(run);
+            }
+            run.clear();
+            continue;
+        }
+        if (run.empty()) {
+            run.push_back(a);
+        }
+        run.push_back(b);
+    }
+    if (run.size() >= 2 && !offCanvas(run, imageWidth, imageHeight)) {
+        runs.push_back(run);
+    }
+    return runs;
+}
+
+// The stretches of a face's outline that nothing hides. The outline is sampled
+// at most 2 px apart; each sample's ray is met with the face's own plane, and
+// the sample is hidden when any frame solid -- another gate's, or this gate's
+// own front ring in front of a far inner wall -- is hit meaningfully nearer.
+//
+// The tolerance (1 cm plus 0.2% of the depth) absorbs the fisheye outline's
+// chords: they run a fraction of a pixel off the curved edge, so near a corner
+// their rays can meet the neighbouring face of the same gate millimetres early.
+// Real occlusion is at least a frame's thickness deep and is not affected.
+std::vector<std::vector<cv::Point2d>> visibleRuns(const std::vector<cv::Point2d>& line,
+                                                  const Eigen::Vector3d& planePoint,
+                                                  const Eigen::Vector3d& planeNormal,
+                                                  const std::vector<FrameSolid>& solids,
+                                                  const std::vector<double>& radii, const Transform& tWorldCam,
+                                                  const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
+                                                  bool fisheye, int imageWidth, int imageHeight) {
+    constexpr double kStep = 2.0;  // px
+    std::vector<cv::Point2d> samples{line.front()};
+    for (size_t i = 1; i < line.size(); ++i) {
+        const cv::Point2d delta = line[i] - line[i - 1];
+        const int n = std::max(1, static_cast<int>(std::ceil(std::hypot(delta.x, delta.y) / kStep)));
+        for (int k = 1; k <= n; ++k) {
+            samples.push_back(line[i - 1] + delta * (static_cast<double>(k) / n));
+        }
+    }
+    const std::vector<Eigen::Vector3d> rays = pixelRays(samples, cameraMatrix, distCoeffs, fisheye);
+    const Eigen::Vector3d& origin = tWorldCam.t;
+
+    std::vector<std::vector<cv::Point2d>> runs;
+    std::vector<cv::Point2d> run;
+    for (size_t i = 0; i < samples.size(); ++i) {
+        const cv::Point2d& s = samples[i];
+        // Off the canvas nothing is drawn, so do not spend a test or break the run there.
+        const bool onCanvas = s.x > -kStep && s.y > -kStep && s.x < imageWidth + kStep && s.y < imageHeight + kStep;
+        bool visible = true;
+        const Eigen::Vector3d dir = tWorldCam.R * rays[i];
+        const double facing = dir.dot(planeNormal);
+        if (onCanvas && std::abs(facing) > 1e-9) {
+            const double depth = (planePoint - origin).dot(planeNormal) / facing;
+            const double tolerance = 0.01 + 0.002 * depth;
+            for (size_t g = 0; visible && depth > 0.0 && g < solids.size(); ++g) {
+                const Eigen::Vector3d toCentre = solids[g].center - origin;
+                const double along = toCentre.dot(dir);
+                if (along + radii[g] < 0.0 || along - radii[g] > depth ||
+                    (toCentre - along * dir).norm() > radii[g]) {
+                    continue;  // the ray misses this gate's bounding sphere before the face
+                }
+                visible = firstHit(solids[g], origin, dir) >= depth - tolerance;
+            }
+        }
+        if (visible) {
+            run.push_back(s);
+        } else {
+            if (run.size() >= 2) {
+                runs.push_back(run);
+            }
+            run.clear();
+        }
+    }
+    if (run.size() >= 2) {
+        runs.push_back(run);
+    }
+    return runs;
+}
+
+}  // namespace
+
+std::vector<GateEdges> gateFaceEdges(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                      const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                      const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                                      double thetaMax) {
+    const Transform tWorldBase =
+        poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
+    const Transform tWorldCam = compose(tWorldBase, tBaseCam);
+    const Transform tCamWorld = invert(tWorldCam);
+    const Eigen::Vector3d camPosWorld = tWorldCam.t;
+
+    // Every gate's frame, and a sphere around it, for hiding occluded stretches.
+    std::vector<FrameSolid> solids;
+    std::vector<double> radii;
+    for (const auto& [otherName, other] : gates) {
+        solids.push_back(frameSolid(other));
+        // Outer ring's circumradius squared over outerSize squared, as in detectGates' cull.
+        const double circumFactor = other.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
+        radii.push_back(std::sqrt(circumFactor * other.dims.outerSize * other.dims.outerSize +
+                                  0.25 * other.dims.thickness * other.dims.thickness));
+    }
+
+    std::vector<GateEdges> result;
+    for (const auto& [name, gate] : gates) {
+        const GatePose& gatePose = gate.pose;
+        const GateDims& gateDims = gate.dims;
+        const GateFaces faces = gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw,
+                                           gateDims.outerSize, gateDims.innerSize, gateDims.thickness);
+        const Eigen::Vector3d center(gatePose.x, gatePose.y, gatePose.z);
+        const Eigen::Vector3d normal(std::cos(gatePose.yaw), std::sin(gatePose.yaw), 0.0);
+
+        // A ring face is visible from outside its own plane; from between the
+        // two planes (inside the frame's thickness) neither is.
+        std::vector<Polygon3d> visible;
+        const double along = normal.dot(camPosWorld - center);
+        if (along < -gateDims.thickness / 2.0 || along > gateDims.thickness / 2.0) {
+            const int ring = along < 0.0 ? 0 : 1;  // front ring faces -normal, back ring +normal
+            visible.push_back(faces.outerFaces[ring]);
+            visible.push_back(faces.innerFaces[ring]);
+        }
+        if (gateDims.thickness > 0.0) {
+            // A wall between ring corners a and b is visible when the camera is
+            // on the side it faces: away from the gate's axis for an outer wall,
+            // toward it for an inner one. The edge midpoint's radial direction is
+            // the wall's normal, the rings being regular polygons.
+            const auto facesCamera = [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b, bool outward) {
+                Eigen::Vector3d radial = 0.5 * (a + b) - center;
+                radial -= radial.dot(normal) * normal;
+                return (outward ? 1.0 : -1.0) * radial.dot(camPosWorld - a) > 0.0;
+            };
+            for (size_t i = 2; i < faces.outerFaces.size(); ++i) {
+                const Polygon3d& wall = faces.outerFaces[i];  // {front[i], front[j], back[j], back[i]}
+                if (facesCamera(wall[0], wall[1], true)) {
+                    visible.push_back(wall);
+                }
+            }
+            const Polygon3d& frontInner = faces.innerFaces[0];
+            const Polygon3d& backInner = faces.innerFaces[1];
+            const size_t n = frontInner.size();
+            for (size_t i = 0; i < n; ++i) {
+                const size_t j = (i + 1) % n;
+                if (facesCamera(frontInner[i], frontInner[j], false)) {
+                    visible.push_back(Polygon3d{frontInner[i], frontInner[j], backInner[j], backInner[i]});
+                }
+            }
+        }
+
+        GateEdges edges;
+        edges.gate = name;
+        for (const auto& face : visible) {
+            const FacePixels facePx = projectFaceClipped(face, tCamWorld, cameraMatrix, distCoeffs, thetaMax, fisheye,
+                                                         imageWidth, imageHeight);
+            const Eigen::Vector3d planeNormal = (face[1] - face[0]).cross(face[2] - face[0]).normalized();
+            for (const auto& run : outlineEdges(facePx, imageWidth, imageHeight)) {
+                for (auto& part : visibleRuns(run, face[0], planeNormal, solids, radii, tWorldCam, cameraMatrix,
+                                              distCoeffs, fisheye, imageWidth, imageHeight)) {
+                    edges.polylines.push_back(std::move(part));
+                }
+            }
+        }
+        if (!edges.polylines.empty()) {
+            result.push_back(std::move(edges));
+        }
+    }
+    return result;
 }
 
 BoundingBox boundingBoxOfMask(const cv::Mat& mask) {
@@ -581,8 +1014,8 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
 
         // `minVisibleCorners == 0` means "everything in the picture", not
         // "every gate in the config". Without this the caller also gets the
-        // gates behind the camera and off the far side of the track -- at the
-        // default 3 they are excluded by the corner count, but 0 excludes
+        // gates behind the camera and off the far side of the track -- at 3
+        // they are excluded by the corner count, but 0 excludes
         // nothing, and a gate that projects nowhere has an empty mask, an
         // empty box and only `inFrustum = false` keypoints, i.e. nothing to
         // describe it at all.

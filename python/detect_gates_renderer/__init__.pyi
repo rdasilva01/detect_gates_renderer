@@ -45,6 +45,12 @@ class GateDetection:
     # when no corner is in the frustum.
     mask_bounding_box: BoundingBox
 
+class GateEdges:
+    gate: str
+    # Visible face edges as open polylines of (x, y), in output pixels.
+    @property
+    def polylines(self) -> list[list[tuple[float, float]]]: ...
+
 class GateRenderer:
     def __init__(self, gates_config_path: str, drone_config_path: str, camera_config_path: str,
                  rectified: bool = False) -> None: ...
@@ -66,6 +72,11 @@ class GateRenderer:
     @overload
     def render_detections(self, x: float, y: float, z: float, roll: float, pitch: float, yaw: float,
                            min_visible_corners: int = ...) -> list[GateDetection]: ...
+    @overload
+    def render_face_edges(self, pose: DronePose) -> list[GateEdges]: ...
+    @overload
+    def render_face_edges(self, x: float, y: float, z: float, roll: float, pitch: float,
+                          yaw: float) -> list[GateEdges]: ...
     @property
     def image_width(self) -> int: ...
     @property

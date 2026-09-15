@@ -66,7 +66,7 @@ cv::Mat mask = renderer.render(detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.
 
 std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
     detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
-// Optional 2nd arg: minVisibleCorners (default 3) -- gates with fewer than
+// Optional 2nd arg: minVisibleCorners (default 0) -- gates with fewer than
 // this many visible keypoints (before or after cross-gate occlusion) are
 // omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
 // (x1,y1,x2,y2 over visible keypoints only), `keypoints` (the *_inner corners
@@ -74,8 +74,9 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
 
-Pass `minVisibleCorners = 0` for **everything in the picture** rather than
-everything with enough corners. This is the setting the mask exists for: a gate
+The default, `minVisibleCorners = 0`, returns **everything in the picture**
+rather than everything with enough corners; pass e.g. 3 for only gates with
+that many visible corners. 0 is the setting the mask exists for: a gate
 can sit close and off to one side so that every corner leaves the fisheye's
 `theta < thetaMax` cone while its frame still crosses the image, and such a gate
 is dropped at any threshold above 0 — its `boundingBox` is empty and all its
@@ -344,7 +345,7 @@ masks = renderer.render_batch(poses)
 # `OMP_NUM_THREADS=8` beats letting it use every core.
 # Note it does not release the GIL, so other Python threads block for the duration.
 
-detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
+detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 0)
 # Pass 0 for every gate in the picture, including ones whose corners all left the
 # fisheye cone -- those have an empty bounding_box but a real `mask`.
 for d in detections:
@@ -372,11 +373,13 @@ python examples/python/visualize_detections.py --output overlay.png
 ```
 
 `examples/python/live_view.py` is an interactive viewer (Python-only, no C++
-equivalent): it renders continuously in a window (with an FPS counter) and
+equivalent): it renders continuously in a window (with a frame-time readout in ms) and
 lets you fly around in the drone's body frame with the keyboard (arrows =
 forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
-Tab = toggle the pose-detection overlay on/off, `1` = toggle the FPS readout,
+Tab = toggle the pose-detection overlay on/off, `1` = toggle the frame-time readout,
 `2` = toggle the full-resolution mask vs. the configured output size,
+`3` = toggle the binary mask vs. instance segmentation (one colour per gate),
+`4` = toggle each gate's visible face edges (`render_face_edges()`),
 Space = toggle rectified vs. raw fisheye view, Esc = quit). Requires a
 GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 

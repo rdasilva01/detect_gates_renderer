@@ -160,9 +160,19 @@ cv::Mat GateRenderer::render(double x, double y, double z, double roll, double p
 
 GateRenderer::Segmentation GateRenderer::renderSegmented(const DronePose& pose) const {
     Segmentation out;
-    out.coverage = render(pose);
-    cv::Mat instances = renderPoseInstances(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_,
-                                             renderHeight_, fisheye_, thetaMax_);
+    // Both masks from one projection and rasterization per gate. `coverage` is
+    // still exactly what `render()` returns: the same OR of the same
+    // silhouettes, resampled the same way.
+    const SceneSegmentation scene = renderPoseSegmented(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_,
+                                                        renderWidth_, renderHeight_, fisheye_, thetaMax_);
+    out.coverage = scene.coverage;
+    if (resample_) {
+        cv::Mat resized;
+        cv::resize(scene.coverage, resized, cv::Size(outputWidth_, outputHeight_), 0, 0,
+                   toCvInterpolation(interMethod_));
+        out.coverage = resized;
+    }
+    cv::Mat instances = scene.instances;
     if (resample_) {
         // **Per-label area, then argmax** -- one pass, not one resize per label.
         //
@@ -327,6 +337,26 @@ std::vector<GateDetection> GateRenderer::renderDetections(const DronePose& pose,
 std::vector<GateDetection> GateRenderer::renderDetections(double x, double y, double z, double roll, double pitch,
                                                            double yaw, int minVisibleCorners) const {
     return renderDetections(DronePose{x, y, z, roll, pitch, yaw}, minVisibleCorners);
+}
+
+std::vector<GateEdges> GateRenderer::renderFaceEdges(const DronePose& pose) const {
+    std::vector<GateEdges> edges = gateFaceEdges(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_,
+                                                 renderHeight_, fisheye_, thetaMax_);
+    if (!resample_) {
+        return edges;
+    }
+    // Same change of units as the detections' keypoints.
+    const double scaleX = static_cast<double>(outputWidth_) / renderWidth_;
+    const double scaleY = static_cast<double>(outputHeight_) / renderHeight_;
+    for (auto& gate : edges) {
+        for (auto& polyline : gate.polylines) {
+            for (auto& p : polyline) {
+                p.x *= scaleX;
+                p.y *= scaleY;
+            }
+        }
+    }
+    return edges;
 }
 
 }  // namespace detect_gates
