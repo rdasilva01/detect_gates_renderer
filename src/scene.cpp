@@ -335,6 +335,39 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
     const Transform tCamWorld = invert(tWorldCam);
     const Eigen::Vector3d camPosWorld = tWorldCam.t;
 
+    // Gates that cannot put a single pixel in the image are skipped before the
+    // expensive part below, rasterizing their silhouette at full resolution. At
+    // `minVisibleCorners == 0` nothing else filters them, so without this every
+    // gate on the track -- the ones behind the camera included -- is drawn and
+    // then thrown away for having an empty mask.
+    //
+    // The test is the gate's bounding sphere against the {theta <= thetaMax}
+    // cone, and skipping on it changes nothing only if no point past thetaMax
+    // lands in the image. Pinhole guarantees that by clipping to the cone in 3D.
+    // A fisheye does as long as theta_d keeps growing past thetaMax, which is
+    // where theta_d reaches the image corners; a calibration whose polynomial
+    // turns back would fold far-off geometry into view, so there it is not used.
+    const double gateRadius = std::sqrt(0.5 * gateDims.outerSize * gateDims.outerSize +
+                                        0.25 * gateDims.thickness * gateDims.thickness);
+    bool canCull = true;
+    if (fisheye) {
+        std::array<double, 4> k{0.0, 0.0, 0.0, 0.0};
+        for (int i = 0; i < std::min(4, static_cast<int>(distCoeffs.total())); ++i) {
+            k[i] = distCoeffs.at<double>(i);
+        }
+        const auto thetaD = [&k](double t) {
+            const double t2 = t * t;
+            return t * (1.0 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))));
+        };
+        constexpr int kSamples = 256;
+        double prev = thetaD(thetaMax);
+        for (int i = 1; i <= kSamples && canCull; ++i) {
+            const double curr = thetaD(thetaMax + (CV_PI - thetaMax) * i / kSamples);
+            canCull = curr > prev;
+            prev = curr;
+        }
+    }
+
     std::vector<Candidate> candidates;
     for (const auto& [name, gatePose] : gates) {
         const GateFaces faces = gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
@@ -391,6 +424,16 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
         }
         if (visibleCount < minVisibleCorners) {
             continue;
+        }
+        if (canCull) {
+            const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
+            const double dist = centerCam.norm();
+            if (dist > gateRadius &&
+                std::atan2(std::hypot(centerCam.x(), centerCam.y()), centerCam.z()) -
+                        std::asin(gateRadius / dist) >
+                    thetaMax) {
+                continue;
+            }
         }
 
         // This gate's full rendered silhouette (all outer faces OR-ed minus
