@@ -36,23 +36,47 @@ cv::Mat matFromYamlData(const YAML::Node& node, int rows, int cols) {
     return mat;
 }
 
-// Canonical keypoint corner order, and where each canonical corner sits in
-// `squareCorners()`'s own (lateral_sign, vertical_sign) index order
-// (gates.cpp's kCornerSigns), depending on which side of the gate the
-// camera is on (see detectGates()).
-constexpr const char* kCanonicalNames[4] = {"top_left", "top_right", "bottom_right", "bottom_left"};
-constexpr int kFrontIndexMap[4] = {2, 3, 0, 1};
-constexpr int kBackIndexMap[4] = {3, 2, 1, 0};
+// Canonical keypoint corner order -- clockwise in the image from the top
+// flat's left end -- and where each canonical corner sits in the ring order
+// `gateFaces()` builds (gates.cpp's squareCorners/octagonCorners), depending
+// on which side of the gate the camera is on (see detectGates()).
+constexpr const char* kSquareNames[4] = {"top_left", "top_right", "bottom_right", "bottom_left"};
+constexpr int kSquareFrontIndexMap[4] = {2, 3, 0, 1};
+constexpr int kSquareBackIndexMap[4] = {3, 2, 1, 0};
+constexpr const char* kOctagonNames[8] = {"top_left",     "top_right",   "right_top",   "right_bottom",
+                                          "bottom_right", "bottom_left", "left_bottom", "left_top"};
+constexpr int kOctagonFrontIndexMap[8] = {4, 5, 6, 7, 0, 1, 2, 3};
+constexpr int kOctagonBackIndexMap[8] = {5, 4, 3, 2, 1, 0, 7, 6};
+
+struct CornerLayout {
+    int count;  // corners per ring
+    const char* const* names;
+    const int* frontIndexMap;
+    const int* backIndexMap;
+};
+
+CornerLayout cornerLayout(GateShape shape) {
+    if (shape == GateShape::Octagon) {
+        return {8, kOctagonNames, kOctagonFrontIndexMap, kOctagonBackIndexMap};
+    }
+    return {4, kSquareNames, kSquareFrontIndexMap, kSquareBackIndexMap};
+}
 
 // Is the camera inside this gate's through-hole -- between the two apertures
 // and laterally within them? See `singleGateMask` for what it changes.
-bool cameraInAperture(const GatePose& gate, const GateDims& gateDims, const Eigen::Vector3d& camPosWorld) {
+bool cameraInAperture(const GatePose& gate, GateShape shape, const GateDims& gateDims,
+                      const Eigen::Vector3d& camPosWorld) {
     const Eigen::Vector3d offset = camPosWorld - Eigen::Vector3d(gate.x, gate.y, gate.z);
     const Eigen::Vector3d normal(std::cos(gate.yaw), std::sin(gate.yaw), 0.0);
     const Eigen::Vector3d lateral(-std::sin(gate.yaw), std::cos(gate.yaw), 0.0);
     const double innerHalf = gateDims.innerSize / 2.0;
-    return std::abs(offset.dot(normal)) <= gateDims.thickness / 2.0 && std::abs(offset.dot(lateral)) <= innerHalf &&
-           std::abs(offset.z()) <= innerHalf;
+    const double u = std::abs(offset.dot(lateral));
+    const double v = std::abs(offset.z());
+    const bool inSquare = std::abs(offset.dot(normal)) <= gateDims.thickness / 2.0 && u <= innerHalf &&
+                          v <= innerHalf;
+    // An octagon is that square with its corners cut off: the diagonal flats
+    // are innerHalf from the centre too.
+    return inSquare && (shape != GateShape::Octagon || u + v <= innerHalf * std::sqrt(2.0));
 }
 
 // True if this outline lies wholly off one side of the canvas, and so cannot
@@ -104,9 +128,9 @@ bool gateOffCanvas(const GateFacesPx& gatePx, int imageWidth, int imageHeight) {
 // One gate's detection candidate, before cross-gate occlusion is applied.
 struct Candidate {
     std::string gateName;
-    std::array<Keypoint, 8> keypoints;        // [0..3] = inner, [4..7] = outer, canonical order
-    std::array<Eigen::Vector3d, 8> camPoints;  // same corners, camera-frame, for the per-ray depth check below
-    cv::Mat footprint;                        // this gate's full rendered silhouette (same as segment mode)
+    std::vector<Keypoint> keypoints;         // inner ring, then outer ring, canonical order
+    std::vector<Eigen::Vector3d> camPoints;  // same corners, camera-frame, for the per-ray depth check below
+    cv::Mat footprint;                       // this gate's full rendered silhouette (same as segment mode)
     // Near face's plane in camera frame (unit normal + offset, normal.dot(x) == offset for x on the plane).
     // Used so occlusion requires the occluder to actually be nearer *along the
     // specific ray to each point*, not just nearer on average -- two gates
@@ -135,14 +159,18 @@ std::map<std::string, Gate> loadGatesConfig(const std::string& path) {
         const YAML::Node& gateNode = entry.second;
 
         const std::string type = gateNode["type"].as<std::string>();
-        if (type != "square") {
+        GateShape shape = GateShape::Square;
+        if (type == "octagon") {
+            shape = GateShape::Octagon;
+        } else if (type != "square") {
             throw std::runtime_error("gates_config: gate '" + name + "' has unknown type '" + type +
-                                     "' (known: square)");
+                                     "' (known: square, octagon)");
         }
 
         const YAML::Node& pose = gateNode["pose"];
         const YAML::Node& dims = gateNode["dimensions"];
         gates[name] = Gate{
+            shape,
             GatePose{pose[0].as<double>(), pose[1].as<double>(), pose[2].as<double>(), pose[3].as<double>()},
             GateDims{dims["outer_size"].as<double>(), dims["inner_size"].as<double>(),
                      dims["thickness"] ? dims["thickness"].as<double>() : 0.0}};
@@ -229,11 +257,11 @@ cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dr
         const GatePose& gatePose = gate.pose;
         const GateDims& gateDims = gate.dims;
         const GateFaces faces =
-            gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize, gateDims.innerSize,
-                      gateDims.thickness);
+            gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
+                      gateDims.innerSize, gateDims.thickness);
 
         GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, tWorldCam.t);
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
         gatePx.outerFacesPx.reserve(faces.outerFaces.size());
         for (const auto& face : faces.outerFaces) {
             gatePx.outerFacesPx.push_back(projectFace(face));
@@ -283,11 +311,11 @@ cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const Dron
         // frames, which is precisely the identity this exists to provide.
         ++label;
         const GateFaces faces =
-            gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize, gateDims.innerSize,
-                      gateDims.thickness);
+            gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
+                      gateDims.innerSize, gateDims.thickness);
 
         GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, tWorldCam.t);
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, tWorldCam.t);
         gatePx.outerFacesPx.reserve(faces.outerFaces.size());
         for (const auto& face : faces.outerFaces) {
             gatePx.outerFacesPx.push_back(projectFace(face));
@@ -377,8 +405,8 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
     for (const auto& [name, gate] : gates) {
         const GatePose& gatePose = gate.pose;
         const GateDims& gateDims = gate.dims;
-        const GateFaces faces = gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
-                                           gateDims.innerSize, gateDims.thickness);
+        const GateFaces faces = gateFaces(gate.shape, gatePose.x, gatePose.y, gatePose.z, gatePose.yaw,
+                                           gateDims.outerSize, gateDims.innerSize, gateDims.thickness);
 
         const Eigen::Vector3d center(gatePose.x, gatePose.y, gatePose.z);
         const Eigen::Vector3d normal(std::cos(gatePose.yaw), std::sin(gatePose.yaw), 0.0);
@@ -386,15 +414,17 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
 
         const Polygon3d& outerFace = front ? faces.outerFaces[0] : faces.outerFaces[1];
         const Polygon3d& innerFace = front ? faces.innerFaces[0] : faces.innerFaces[1];
-        const int* indexMap = front ? kFrontIndexMap : kBackIndexMap;
+        const CornerLayout layout = cornerLayout(gate.shape);
+        const int n = layout.count;
+        const int* indexMap = front ? layout.frontIndexMap : layout.backIndexMap;
 
-        // Canonical order: 4 inner corners, then 4 outer corners.
+        // Canonical order: n inner corners, then n outer corners.
         Polygon3d cornersWorld;
-        cornersWorld.reserve(8);
-        for (int i = 0; i < 4; ++i) {
+        cornersWorld.reserve(2 * n);
+        for (int i = 0; i < n; ++i) {
             cornersWorld.push_back(innerFace[indexMap[i]]);
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < n; ++i) {
             cornersWorld.push_back(outerFace[indexMap[i]]);
         }
 
@@ -403,16 +433,19 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
 
         Candidate cand;
         cand.gateName = name;
-        // Outer corners (indices 4..6) are coplanar with the inner ones by
+        cand.keypoints.resize(2 * n);
+        cand.camPoints.resize(2 * n);
+        // Outer corners (indices n..n+2) are coplanar with the inner ones by
         // construction (gateFaces() builds both from the same front/back
         // center using the same lateral/vertical axes), so this plane
         // describes the whole near face.
-        cand.faceNormalCam = (cornersCam[5] - cornersCam[4]).cross(cornersCam[6] - cornersCam[4]).normalized();
-        cand.faceOffsetCam = cand.faceNormalCam.dot(cornersCam[4]);
+        cand.faceNormalCam =
+            (cornersCam[n + 1] - cornersCam[n]).cross(cornersCam[n + 2] - cornersCam[n]).normalized();
+        cand.faceOffsetCam = cand.faceNormalCam.dot(cornersCam[n]);
 
         double depthSum = 0.0;
         int visibleCount = 0;
-        for (int i = 0; i < 8; ++i) {
+        for (int i = 0; i < 2 * n; ++i) {
             const Eigen::Vector3d& p = cornersCam[i];
             const double theta = std::acos(p.z() / p.norm());
             const bool inCone = theta < thetaMax;
@@ -420,8 +453,8 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
                                    projected[i].y < imageHeight;
             const bool visible = inCone && inBounds;
 
-            const std::string suffix = i < 4 ? "_inner" : "_outer";
-            cand.keypoints[i] = Keypoint{kCanonicalNames[i % 4] + suffix, projected[i].x, projected[i].y, visible,
+            const std::string suffix = i < n ? "_inner" : "_outer";
+            cand.keypoints[i] = Keypoint{layout.names[i % n] + suffix, projected[i].x, projected[i].y, visible,
                                           /*inFrustum=*/visible};
             cand.camPoints[i] = p;
             if (visible) {
@@ -433,7 +466,10 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
             continue;
         }
         if (canCull) {
-            const double gateRadius = std::sqrt(0.5 * gateDims.outerSize * gateDims.outerSize +
+            // Outer ring's circumradius squared, over outerSize squared: a
+            // square's half-diagonal, an octagon's 1 / (2 + sqrt 2).
+            const double circumFactor = gate.shape == GateShape::Octagon ? 1.0 / (2.0 + std::sqrt(2.0)) : 0.5;
+            const double gateRadius = std::sqrt(circumFactor * gateDims.outerSize * gateDims.outerSize +
                                                 0.25 * gateDims.thickness * gateDims.thickness);
             const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
             const double dist = centerCam.norm();
@@ -451,7 +487,7 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
         // occlusion tests against the true curved/extruded shape rather
         // than a straight-line approximation of just the near face.
         GateFacesPx gatePx;
-        gatePx.cameraInAperture = cameraInAperture(gatePose, gateDims, camPosWorld);
+        gatePx.cameraInAperture = cameraInAperture(gatePose, gate.shape, gateDims, camPosWorld);
         gatePx.outerFacesPx.reserve(faces.outerFaces.size());
         for (const auto& face : faces.outerFaces) {
             gatePx.outerFacesPx.push_back(
@@ -466,7 +502,7 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
         }
         cand.footprint = singleGateMask(gatePx, imageWidth, imageHeight);
 
-        cand.depth = depthSum / 8.0;
+        cand.depth = depthSum / (2.0 * n);
         candidates.push_back(std::move(cand));
     }
 
@@ -483,7 +519,7 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
     for (size_t i = 1; i < candidates.size(); ++i) {
         for (size_t j = 0; j < i; ++j) {
             const Candidate& occluder = candidates[j];
-            for (int k = 0; k < 8; ++k) {
+            for (size_t k = 0; k < candidates[i].keypoints.size(); ++k) {
                 Keypoint& kp = candidates[i].keypoints[k];
                 if (!kp.visible) {
                     continue;
@@ -548,7 +584,7 @@ std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates,
         // gates behind the camera and off the far side of the track -- at the
         // default 3 they are excluded by the corner count, but 0 excludes
         // nothing, and a gate that projects nowhere has an empty mask, an
-        // empty box and eight `inFrustum = false` keypoints, i.e. nothing to
+        // empty box and only `inFrustum = false` keypoints, i.e. nothing to
         // describe it at all.
         //
         // This is the setting that makes the mask worth having: a gate can sit

@@ -7,6 +7,7 @@
 
 #include <opencv2/core.hpp>
 
+#include "detect_gates/gates.hpp"
 #include "detect_gates/transforms.hpp"
 
 namespace detect_gates {
@@ -15,17 +16,18 @@ struct GatePose {
     double x = 0.0, y = 0.0, z = 0.0, yaw = 0.0;
 };
 
-// Dimensions of a `square` gate.
+// Frame dimensions. Sizes are a square's side, or an octagon's width across flats.
 struct GateDims {
     double outerSize = 0.0;
     double innerSize = 0.0;
     double thickness = 0.0;
 };
 
-// One gate from gates_config.yaml. `square` is the only type so far, so its
-// dimensions are all a gate carries; a new type needs its own dimensions and
-// its own faces, keypoints and aperture test wherever `dims` is used.
+// One gate from gates_config.yaml. Both types so far are described by the same
+// three dimensions; a type that is not needs its own dimensions as well as its
+// own faces, keypoints and aperture test wherever `shape` is used.
 struct Gate {
+    GateShape shape = GateShape::Square;
     GatePose pose;
     GateDims dims;
 };
@@ -103,7 +105,12 @@ struct GateDetection {
     // Spans the VISIBLE keypoints only, so it is empty (inf, inf, -inf, -inf)
     // for a gate that is fully occluded or has no corner in the frustum.
     BoundingBox boundingBox;
-    std::vector<Keypoint> keypoints;  // 8: 4 *_inner + 4 *_outer, canonical order
+    // One per frame corner, canonical order: the *_inner ring then the *_outer
+    // ring, each clockwise in the image from the top flat's left end. 8 for a
+    // square (top_left, top_right, bottom_right, bottom_left), 16 for an
+    // octagon (top_left, top_right, right_top, right_bottom, bottom_right,
+    // bottom_left, left_bottom, left_top).
+    std::vector<Keypoint> keypoints;
 
     // This gate's own silhouette, CV_8UC1 with 0/255 -- exactly what
     // `renderPose` draws for this gate alone, before any other gate occludes
@@ -112,7 +119,7 @@ struct GateDetection {
     //
     //   - a fisheye bows the gate's straight edges OUTSIDE the straight lines
     //     joining its corners (which is why the faces are subdivided before
-    //     projection), so a box built from the 8 corners under-covers the real
+    //     projection), so a box built from the corners under-covers the real
     //     silhouette;
     //   - a gate can be close and off to one side such that every corner
     //     leaves the `theta < thetaMax` cone while its frame still crosses the
@@ -167,9 +174,9 @@ CameraCalibration loadCameraCalibration(const std::string& path);
 // of the image.
 
 // Render the segmentation mask seen from `dronePos`.
-cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
-                    const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
-                    double thetaMax = 89.0 * CV_PI / 180.0);
+cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam,
+                    const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
+                    bool fisheye = true, double thetaMax = 89.0 * CV_PI / 180.0);
 
 // Render the INSTANCE mask seen from `dronePos`: 0 for background, otherwise
 // the gate's 1-based position in `gates` iteration order (i.e. sorted by gate
@@ -179,17 +186,20 @@ cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dr
 // Where two gates overlap the nearer one owns the pixel, resolved by mean
 // camera-frame depth of the gate centre. `renderPose` needs no such rule: it
 // OR-s, and OR does not care who contributed.
-cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
-                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
+cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                             const Transform& tBaseCam, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
+                             int imageWidth, int imageHeight, bool fisheye = true,
                              double thetaMax = 89.0 * CV_PI / 180.0);
 
-// Detect per-gate keypoints (4 inner + 4 outer corners) and bounding boxes
-// as seen from `dronePos`, with cross-gate occlusion handling. Gates with
-// fewer than `minVisibleCorners` visible keypoints (before or after
-// occlusion) are omitted. Survivors are returned nearest-camera-first.
-std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam,
-                                        const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,
-                                        int imageHeight, bool fisheye = true,
-                                        double thetaMax = 89.0 * CV_PI / 180.0, int minVisibleCorners = 3);
+// Detect per-gate keypoints (inner + outer frame corners, see
+// `GateDetection::keypoints`) and bounding boxes as seen from `dronePos`, with
+// cross-gate occlusion handling. Gates with fewer than `minVisibleCorners`
+// visible keypoints (before or after occlusion) are omitted. Survivors are
+// returned nearest-camera-first.
+std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                        const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                        const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
+                                        bool fisheye = true, double thetaMax = 89.0 * CV_PI / 180.0,
+                                        int minVisibleCorners = 3);
 
 }  // namespace detect_gates

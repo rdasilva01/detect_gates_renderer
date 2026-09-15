@@ -4,7 +4,7 @@ A standalone C++ library for rendering gate-segmentation masks and pose/
 keypoint detections: given a gate layout, a drone pose, and a fisheye camera
 calibration, it can render either a binary segmentation mask of what the
 camera would see (255 = gate frame, 0 = background), or per-gate keypoint
-(4 inner + 4 outer corner) and bounding-box detections with cross-gate
+(inner + outer corner) and bounding-box detections with cross-gate
 occlusion handling.
 
 The segmentation pipeline is a C++ port of the geometry/projection/rendering
@@ -69,8 +69,8 @@ std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
 // Optional 2nd arg: minVisibleCorners (default 3) -- gates with fewer than
 // this many visible keypoints (before or after cross-gate occlusion) are
 // omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
-// (x1,y1,x2,y2 over visible keypoints only), 8 `keypoints`
-// (4 *_inner + 4 *_outer, each with name/x/y/visible), plus `mask` (this
+// (x1,y1,x2,y2 over visible keypoints only), `keypoints` (the *_inner corners
+// then the *_outer ones, each with name/x/y/visible), plus `mask` (this
 // gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
 
@@ -78,7 +78,7 @@ Pass `minVisibleCorners = 0` for **everything in the picture** rather than
 everything with enough corners. This is the setting the mask exists for: a gate
 can sit close and off to one side so that every corner leaves the fisheye's
 `theta < thetaMax` cone while its frame still crosses the image, and such a gate
-is dropped at any threshold above 0 — its `boundingBox` is empty and all eight
+is dropped at any threshold above 0 — its `boundingBox` is empty and all its
 keypoints are `inFrustum = false`, so the mask is the only thing describing it.
 At `0`, gates that project nowhere at all (behind the camera, off the far side
 of the track) are dropped instead of returned empty, so every detection you get
@@ -202,8 +202,9 @@ without re-reading the camera calibration).
 ## Gate layout
 
 `gates_config.yaml` lists every gate with its own type, pose and dimensions,
-so a track can mix gates of different sizes (and, later, shapes). `pose` is
-`[x, y, z, yaw]`; the keys under `dimensions` depend on the type:
+so a track can mix gates of different shapes and sizes. `pose` is
+`[x, y, z, yaw]`, with `z` the frame's centre; the keys under `dimensions`
+depend on the type:
 
 ```yaml
 gates:
@@ -213,11 +214,20 @@ gates:
     dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
 ```
 
-| type | dimensions |
-| --- | --- |
-| `square` | `outer_size`, `inner_size`, `thickness` (optional, default 0) |
+| type | dimensions | keypoints |
+| --- | --- | --- |
+| `square` | `outer_size`, `inner_size` (side lengths), `thickness` (optional, default 0) | 8 |
+| `octagon` | `outer_size`, `inner_size` (widths across flats), `thickness` (optional, default 0) | 16 |
 
-An unknown type is an error at load time.
+An octagon is regular with its top and bottom flats horizontal; the 2.7 / 1.9 m
+gate has sides of 1.118 / 0.787 m. Stands and bases are not modelled for either
+type. An unknown type is an error at load time.
+
+Keypoints are the frame's corners: the `_inner` ring, then the `_outer` ring,
+each clockwise in the image from the top flat's left end —
+`top_left, top_right, bottom_right, bottom_left` for a square,
+`top_left, top_right, right_top, right_bottom, bottom_right, bottom_left,
+left_bottom, left_top` for an octagon.
 
 ## Output resolution
 
