@@ -1,16 +1,14 @@
-gate_dimensions:
-  outer_size: 2.7
-  inner_size: 1.5
-  thickness: 0.15
+# Gate dimensions live per gate in gates_config.yaml.
 
 # Resolution of the mask handed back by the renderer. Optional: leave both out
-# and masks come out at the camera calibration's resolution (820x616 for
+# and masks come out at the camera calibration's resolution (640x640 for
 # config/camera_calibration.yaml). Set together or not at all.
 #
-# The aspect ratio is not preserved for you: 820x616 -> 64x64 squashes the view
-# horizontally (12.8x) more than vertically (9.6x). That is fine as long as the
-# real camera images are resized the same way -- but if you letterbox or crop
-# those, do the same to the mask or the two will not line up.
+# The aspect ratio is not preserved for you: with a non-square calibration,
+# e.g. 820x616 -> 64x64, the view is squashed horizontally (12.8x) more than
+# vertically (9.6x). That is fine as long as the real camera images are resized
+# the same way -- but if you letterbox or crop those, do the same to the mask or
+# the two will not line up.
 output_width: 64
 output_height: 64
 
@@ -23,15 +21,16 @@ output_height: 64
 # random. That does make the mask soft (0-255) instead of binary -- threshold
 # it yourself if your loss needs hard labels.
 #
-# `nearest` keeps the mask binary but point-samples one pixel per 12.8x9.6
-# block, so thin frames break up into dots (measured over 54 poses at 0.3-26 m:
-# IoU 0.55 against true coverage, vs 0.71 for area).
+# `nearest` keeps the mask binary but point-samples one pixel per 10x10 block
+# (640x640 -> 64x64), so thin frames break up into dots (measured at
+# 820x616 -> 64x64 over 54 poses at 0.3-26 m: IoU 0.55 against true coverage,
+# vs 0.71 for area).
 inter_method: nearest
 
 # Rasterize straight at the output resolution, scaling the intrinsics to match,
 # instead of rendering at the calibration resolution and resampling.
 #
-# ~18x faster (0.25 vs 4.45 ms/frame at 64x64), and worth it for very large
+# ~18x faster (0.25 vs 4.45 ms/frame at 64x64, from 820x616), and worth it for very large
 # datasets. The cost is accuracy: a rasterizer only answers yes/no per pixel, so
 # a gate frame thinner than one output pixel is rounded up to a whole one
 # (about +15% mask area at 64x64) and a soft mask is not possible at all.

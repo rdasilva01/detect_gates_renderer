@@ -199,6 +199,26 @@ The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
 available directly if you need more control (e.g. reloading a gate layout
 without re-reading the camera calibration).
 
+## Gate layout
+
+`gates_config.yaml` lists every gate with its own type, pose and dimensions,
+so a track can mix gates of different sizes (and, later, shapes). `pose` is
+`[x, y, z, yaw]`; the keys under `dimensions` depend on the type:
+
+```yaml
+gates:
+  gate01:
+    type: square
+    pose: [12.5, 2.0, 1.45, 3.14159]
+    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+```
+
+| type | dimensions |
+| --- | --- |
+| `square` | `outer_size`, `inner_size`, `thickness` (optional, default 0) |
+
+An unknown type is an error at load time.
+
 ## Output resolution
 
 By default a mask comes out at the camera calibration's `image_width` /
@@ -219,7 +239,8 @@ above scale the intrinsics for you, leaving the field of view untouched.
 `renderDetections()` keypoints and bounding boxes are returned in
 output-resolution pixels, so they always line up with `render()`'s mask.
 
-Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
+Two things worth knowing when downscaling hard (e.g. 640×640 → 64×64; the
+figures below were measured with an earlier 820×616 calibration):
 
 - `area` (the default) makes the mask **soft**: each output pixel carries the
   fraction of itself covered by gate, so a frame thinner than one output pixel
@@ -233,8 +254,9 @@ Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
   pixel: sub-pixel frames get rounded up to a whole one (~+15% mask area at
   64×64) and a soft mask is not possible.
 
-The aspect ratio is not preserved for you — 820×616 → 64×64 squashes
-horizontally (12.8×) more than vertically (9.6×). That is fine provided the
+The aspect ratio is not preserved for you — with a non-square calibration,
+e.g. 820×616 → 64×64, the view is squashed horizontally (12.8×) more than
+vertically (9.6×). That is fine provided the
 real camera images are resized identically; if you letterbox or crop those, do
 the same to the mask.
 
@@ -352,7 +374,7 @@ GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 python examples/python/live_view.py
 ```
 
-Masks smaller than `--display-size` (default 820x616) are upscaled
+Masks smaller than `--display-size` (default 640x640) are upscaled
 nearest-neighbour for viewing, so a renderer configured for 64x64 output still
 gives a readable window — the overlay and text are drawn at full size over the
 mask's real pixel grid. This affects the preview only.

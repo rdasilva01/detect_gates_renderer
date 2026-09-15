@@ -7,8 +7,9 @@
 // well defined for every theta in [0, pi) and maps the whole sphere into a
 // bounded disk (r <= f * pi), so nothing needs clipping in 3D -- geometry
 // past theta = 90 deg is projected where it belongs, which matters because a
-// >180 deg fisheye genuinely sees behind its own image plane (the calibration
-// in `config/` reaches theta = 105.8 deg at the image corners). Note that
+// >180 deg fisheye genuinely sees behind its own image plane (an 820x616
+// calibration with f = 281.8 px reaches theta = 105.8 deg at the image
+// corners). Note that
 // `cv::fisheye::projectPoints` cannot be used for this: it computes theta as
 // atan(|xy| / z), which is only correct for z > 0 and folds anything past
 // 90 deg back across the principal point.
@@ -84,8 +85,9 @@ double rectifiedThetaMax(const cv::Mat& newCameraMatrix, int imageWidth, int ima
 // Max angle-from-optical-axis covered by a *fisheye* image of this size.
 //
 // The equidistant counterpart of `rectifiedThetaMax`: inverts the distortion
-// polynomial at the image corners. Unlike the pinhole case this routinely
-// exceeds 90 deg (105.8 deg for the calibration in `config/`), so it is not a
+// polynomial at the image corners. Unlike the pinhole case this can exceed
+// 90 deg (105.8 deg for an 820x616 calibration with f = 281.8 px; 88.5 deg for
+// the 640x640 one in `config/`), so it is not a
 // clipping bound -- it is the real angular extent of the image, used to decide
 // whether a point is inside the field of view.
 double fisheyeThetaMax(const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth, int imageHeight);

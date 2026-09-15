@@ -58,7 +58,6 @@ int toCvInterpolation(InterMethod method) {
 GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string& droneConfigPath,
                             const std::string& cameraConfigPath, bool rectified) {
     gates_ = loadGatesConfig(gatesConfigPath);
-    gateDims_ = loadGateDims(droneConfigPath);
     const OutputSettings output = loadOutputSettings(droneConfigPath);
 
     const CameraCalibration calib = loadCameraCalibration(cameraConfigPath);
@@ -99,15 +98,16 @@ GateRenderer::GateRenderer(const std::string& gatesConfigPath, const std::string
 
     // Derived from the final camera, so it describes whatever resolution the
     // rasterizer ended up working at. For a raw fisheye this is the lens's true
-    // angular extent (105.8 deg for the calibration in config/, i.e. past 90
-    // deg); for a pinhole or rectified view it is also the FOV clipping cone.
+    // angular extent (88.5 deg for the calibration in config/, and past 90 deg
+    // for a wider lens); for a pinhole or rectified view it is also the FOV
+    // clipping cone.
     thetaMax_ = fisheye_ ? fisheyeThetaMax(cameraMatrix_, distCoeffs_, renderWidth_, renderHeight_)
                           : rectifiedThetaMax(cameraMatrix_, renderWidth_, renderHeight_);
 }
 
 cv::Mat GateRenderer::render(const DronePose& pose) const {
-    cv::Mat mask = renderPose(gates_, gateDims_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_,
-                               renderHeight_, fisheye_, thetaMax_);
+    cv::Mat mask = renderPose(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_, renderHeight_,
+                               fisheye_, thetaMax_);
     if (!resample_) {
         return mask;
     }
@@ -161,8 +161,8 @@ cv::Mat GateRenderer::render(double x, double y, double z, double roll, double p
 GateRenderer::Segmentation GateRenderer::renderSegmented(const DronePose& pose) const {
     Segmentation out;
     out.coverage = render(pose);
-    cv::Mat instances = renderPoseInstances(gates_, gateDims_, pose, tBaseCam_, cameraMatrix_, distCoeffs_,
-                                             renderWidth_, renderHeight_, fisheye_, thetaMax_);
+    cv::Mat instances = renderPoseInstances(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_,
+                                             renderHeight_, fisheye_, thetaMax_);
     if (resample_) {
         // **Per-label area, then argmax** -- one pass, not one resize per label.
         //
@@ -257,8 +257,8 @@ std::vector<std::string> GateRenderer::gateNames() const {
 
 std::vector<GateDetection> GateRenderer::renderDetections(const DronePose& pose, int minVisibleCorners) const {
     std::vector<GateDetection> detections =
-        detectGates(gates_, gateDims_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_, renderHeight_,
-                     fisheye_, thetaMax_, minVisibleCorners);
+        detectGates(gates_, pose, tBaseCam_, cameraMatrix_, distCoeffs_, renderWidth_, renderHeight_, fisheye_,
+                     thetaMax_, minVisibleCorners);
     if (!resample_) {
         return detections;
     }

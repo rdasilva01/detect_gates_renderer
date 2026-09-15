@@ -125,25 +125,29 @@ DronePose poseFromQuaternion(double x, double y, double z, double qw, double qx,
     return DronePose{x, y, z, rpy.x(), rpy.y(), rpy.z()};
 }
 
-std::map<std::string, GatePose> loadGatesConfig(const std::string& path) {
+std::map<std::string, Gate> loadGatesConfig(const std::string& path) {
     const YAML::Node root = YAML::LoadFile(path);
-    const YAML::Node posesNode = root["gates_poses"];
+    const YAML::Node gatesNode = root["gates"];
 
-    std::map<std::string, GatePose> gates;
-    for (const auto& entry : posesNode) {
+    std::map<std::string, Gate> gates;
+    for (const auto& entry : gatesNode) {
         const std::string name = entry.first.as<std::string>();
-        const YAML::Node& pose = entry.second;
-        gates[name] = GatePose{pose[0].as<double>(), pose[1].as<double>(), pose[2].as<double>(), pose[3].as<double>()};
+        const YAML::Node& gateNode = entry.second;
+
+        const std::string type = gateNode["type"].as<std::string>();
+        if (type != "square") {
+            throw std::runtime_error("gates_config: gate '" + name + "' has unknown type '" + type +
+                                     "' (known: square)");
+        }
+
+        const YAML::Node& pose = gateNode["pose"];
+        const YAML::Node& dims = gateNode["dimensions"];
+        gates[name] = Gate{
+            GatePose{pose[0].as<double>(), pose[1].as<double>(), pose[2].as<double>(), pose[3].as<double>()},
+            GateDims{dims["outer_size"].as<double>(), dims["inner_size"].as<double>(),
+                     dims["thickness"] ? dims["thickness"].as<double>() : 0.0}};
     }
     return gates;
-}
-
-GateDims loadGateDims(const std::string& path) {
-    const YAML::Node root = YAML::LoadFile(path);
-
-    const YAML::Node& dims = root["gate_dimensions"];
-    return GateDims{dims["outer_size"].as<double>(), dims["inner_size"].as<double>(),
-                     dims["thickness"] ? dims["thickness"].as<double>() : 0.0};
 }
 
 OutputSettings loadOutputSettings(const std::string& path) {
@@ -207,9 +211,9 @@ CameraCalibration loadCameraCalibration(const std::string& path) {
     return calib;
 }
 
-cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                    const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
-                    const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye, double thetaMax) {
+cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam,
+                    const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth, int imageHeight,
+                    bool fisheye, double thetaMax) {
     const Transform tWorldBase =
         poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
     const Transform tWorldCam = compose(tWorldBase, tBaseCam);
@@ -221,7 +225,9 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
     };
 
     std::vector<GateFacesPx> gatesPx;
-    for (const auto& [name, gatePose] : gates) {
+    for (const auto& [name, gate] : gates) {
+        const GatePose& gatePose = gate.pose;
+        const GateDims& gateDims = gate.dims;
         const GateFaces faces =
             gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize, gateDims.innerSize,
                       gateDims.thickness);
@@ -248,10 +254,9 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
     return renderSegmentation(gatesPx, imageWidth, imageHeight);
 }
 
-cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
-                             const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
-                             double thetaMax) {
+cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                             const Transform& tBaseCam, const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs,
+                             int imageWidth, int imageHeight, bool fisheye, double thetaMax) {
     const Transform tWorldBase =
         poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
     const Transform tWorldCam = compose(tWorldBase, tBaseCam);
@@ -269,7 +274,9 @@ cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const 
     };
     std::vector<Painted> painted;
     uint8_t label = 0;
-    for (const auto& [name, gatePose] : gates) {
+    for (const auto& [name, gate] : gates) {
+        const GatePose& gatePose = gate.pose;
+        const GateDims& gateDims = gate.dims;
         // Incremented for EVERY gate, including ones that fall off canvas, so a
         // label means the same gate whatever happens to be in view. A label
         // that shifted with visibility would silently rename gates between
@@ -325,10 +332,10 @@ BoundingBox boundingBoxOfMask(const cv::Mat& mask) {
                         static_cast<double>(box.x + box.width - 1), static_cast<double>(box.y + box.height - 1)};
 }
 
-std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                                        const DronePose& dronePos, const Transform& tBaseCam,
-                                        const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,
-                                        int imageHeight, bool fisheye, double thetaMax, int minVisibleCorners) {
+std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates, const DronePose& dronePos,
+                                        const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+                                        const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye,
+                                        double thetaMax, int minVisibleCorners) {
     const Transform tWorldBase =
         poseToTransform(dronePos.x, dronePos.y, dronePos.z, dronePos.roll, dronePos.pitch, dronePos.yaw);
     const Transform tWorldCam = compose(tWorldBase, tBaseCam);
@@ -347,8 +354,6 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
     // A fisheye does as long as theta_d keeps growing past thetaMax, which is
     // where theta_d reaches the image corners; a calibration whose polynomial
     // turns back would fold far-off geometry into view, so there it is not used.
-    const double gateRadius = std::sqrt(0.5 * gateDims.outerSize * gateDims.outerSize +
-                                        0.25 * gateDims.thickness * gateDims.thickness);
     bool canCull = true;
     if (fisheye) {
         std::array<double, 4> k{0.0, 0.0, 0.0, 0.0};
@@ -369,7 +374,9 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
     }
 
     std::vector<Candidate> candidates;
-    for (const auto& [name, gatePose] : gates) {
+    for (const auto& [name, gate] : gates) {
+        const GatePose& gatePose = gate.pose;
+        const GateDims& gateDims = gate.dims;
         const GateFaces faces = gateFaces(gatePose.x, gatePose.y, gatePose.z, gatePose.yaw, gateDims.outerSize,
                                            gateDims.innerSize, gateDims.thickness);
 
@@ -426,6 +433,8 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
             continue;
         }
         if (canCull) {
+            const double gateRadius = std::sqrt(0.5 * gateDims.outerSize * gateDims.outerSize +
+                                                0.25 * gateDims.thickness * gateDims.thickness);
             const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
             const double dist = centerCam.norm();
             if (dist > gateRadius &&

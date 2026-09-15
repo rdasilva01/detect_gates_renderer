@@ -15,10 +15,19 @@ struct GatePose {
     double x = 0.0, y = 0.0, z = 0.0, yaw = 0.0;
 };
 
+// Dimensions of a `square` gate.
 struct GateDims {
     double outerSize = 0.0;
     double innerSize = 0.0;
     double thickness = 0.0;
+};
+
+// One gate from gates_config.yaml. `square` is the only type so far, so its
+// dimensions are all a gate carries; a new type needs its own dimensions and
+// its own faces, keypoints and aperture test wherever `dims` is used.
+struct Gate {
+    GatePose pose;
+    GateDims dims;
 };
 
 struct DronePose {
@@ -136,11 +145,10 @@ struct GateDetection {
 // convention for "nothing to describe".
 BoundingBox boundingBoxOfMask(const cv::Mat& mask);
 
-// Load a gates_config.yaml's `gates_poses` map (name -> [x, y, z, yaw]).
-std::map<std::string, GatePose> loadGatesConfig(const std::string& path);
-
-// Load a config.yaml's `gate_dimensions` entry.
-GateDims loadGateDims(const std::string& path);
+// Load a gates_config.yaml's `gates` map: name -> {type, pose: [x, y, z, yaw],
+// dimensions: {...}}, the dimensions' keys depending on the type. Throws on an
+// unknown type.
+std::map<std::string, Gate> loadGatesConfig(const std::string& path);
 
 // Load a config.yaml's optional `output_width`, `output_height`,
 // `inter_method` (nearest|linear|area) and `native_inter` entries.
@@ -159,8 +167,7 @@ CameraCalibration loadCameraCalibration(const std::string& path);
 // of the image.
 
 // Render the segmentation mask seen from `dronePos`.
-cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                    const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+cv::Mat renderPose(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
                     const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
                     double thetaMax = 89.0 * CV_PI / 180.0);
 
@@ -172,8 +179,7 @@ cv::Mat renderPose(const std::map<std::string, GatePose>& gates, const GateDims&
 // Where two gates overlap the nearer one owns the pixel, resolved by mean
 // camera-frame depth of the gate centre. `renderPose` needs no such rule: it
 // OR-s, and OR does not care who contributed.
-cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                             const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
+cv::Mat renderPoseInstances(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam, const cv::Mat& cameraMatrix,
                              const cv::Mat& distCoeffs, int imageWidth, int imageHeight, bool fisheye = true,
                              double thetaMax = 89.0 * CV_PI / 180.0);
 
@@ -181,8 +187,7 @@ cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const 
 // as seen from `dronePos`, with cross-gate occlusion handling. Gates with
 // fewer than `minVisibleCorners` visible keypoints (before or after
 // occlusion) are omitted. Survivors are returned nearest-camera-first.
-std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
-                                        const DronePose& dronePos, const Transform& tBaseCam,
+std::vector<GateDetection> detectGates(const std::map<std::string, Gate>& gates, const DronePose& dronePos, const Transform& tBaseCam,
                                         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,
                                         int imageHeight, bool fisheye = true,
                                         double thetaMax = 89.0 * CV_PI / 180.0, int minVisibleCorners = 3);
