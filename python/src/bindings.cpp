@@ -108,6 +108,20 @@ NB_MODULE(_detect_gates_renderer, m) {
         .def_rw("gate", &GateDetection::gate)
         .def_rw("bounding_box", &GateDetection::boundingBox)
         .def_rw("keypoints", &GateDetection::keypoints)
+        .def_prop_ro(
+            "mask", [](const GateDetection& d) { return matToNdarray(d.mask); },
+            // matToNdarray hands back an array that already owns its buffer through
+            // a capsule, so the default reference_internal policy would be both
+            // wrong and rejected.
+            nb::rv_policy::automatic,
+            "This gate's own silhouette as a (height, width) uint8 array, before other "
+            "gates occlude it. Same grid as render(), so it lines up with keypoints "
+            "and bounding_box. At min_visible_corners=0 gates that project nowhere are "
+            "dropped, so a returned detection always has something in its mask.")
+        .def_ro("mask_bounding_box", &GateDetection::maskBoundingBox,
+                "Bounding box of `mask`. Follows the fisheye-curved silhouette, so unlike "
+                "`bounding_box` it stays correct when the edges bow outside the corners and "
+                "when no corner is in the frustum.")
         .def("__repr__", [](const GateDetection& d) {
             return "GateDetection(gate='" + d.gate + "', keypoints=" + std::to_string(d.keypoints.size()) + ")";
         });

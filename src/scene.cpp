@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include <Eigen/Geometry>
+#include <opencv2/imgproc.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "detect_gates/gates.hpp"
@@ -314,6 +315,16 @@ cv::Mat renderPoseInstances(const std::map<std::string, GatePose>& gates, const 
     return renderInstances(gatesPx, labels, imageWidth, imageHeight);
 }
 
+BoundingBox boundingBoxOfMask(const cv::Mat& mask) {
+    const cv::Rect box = cv::boundingRect(mask);
+    if (box.empty()) {
+        return BoundingBox{std::numeric_limits<double>::infinity(), std::numeric_limits<double>::infinity(),
+                            -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
+    }
+    return BoundingBox{static_cast<double>(box.x), static_cast<double>(box.y),
+                        static_cast<double>(box.x + box.width - 1), static_cast<double>(box.y + box.height - 1)};
+}
+
 std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& gates, const GateDims& gateDims,
                                         const DronePose& dronePos, const Transform& tBaseCam,
                                         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, int imageWidth,
@@ -323,6 +334,39 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
     const Transform tWorldCam = compose(tWorldBase, tBaseCam);
     const Transform tCamWorld = invert(tWorldCam);
     const Eigen::Vector3d camPosWorld = tWorldCam.t;
+
+    // Gates that cannot put a single pixel in the image are skipped before the
+    // expensive part below, rasterizing their silhouette at full resolution. At
+    // `minVisibleCorners == 0` nothing else filters them, so without this every
+    // gate on the track -- the ones behind the camera included -- is drawn and
+    // then thrown away for having an empty mask.
+    //
+    // The test is the gate's bounding sphere against the {theta <= thetaMax}
+    // cone, and skipping on it changes nothing only if no point past thetaMax
+    // lands in the image. Pinhole guarantees that by clipping to the cone in 3D.
+    // A fisheye does as long as theta_d keeps growing past thetaMax, which is
+    // where theta_d reaches the image corners; a calibration whose polynomial
+    // turns back would fold far-off geometry into view, so there it is not used.
+    const double gateRadius = std::sqrt(0.5 * gateDims.outerSize * gateDims.outerSize +
+                                        0.25 * gateDims.thickness * gateDims.thickness);
+    bool canCull = true;
+    if (fisheye) {
+        std::array<double, 4> k{0.0, 0.0, 0.0, 0.0};
+        for (int i = 0; i < std::min(4, static_cast<int>(distCoeffs.total())); ++i) {
+            k[i] = distCoeffs.at<double>(i);
+        }
+        const auto thetaD = [&k](double t) {
+            const double t2 = t * t;
+            return t * (1.0 + t2 * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))));
+        };
+        constexpr int kSamples = 256;
+        double prev = thetaD(thetaMax);
+        for (int i = 1; i <= kSamples && canCull; ++i) {
+            const double curr = thetaD(thetaMax + (CV_PI - thetaMax) * i / kSamples);
+            canCull = curr > prev;
+            prev = curr;
+        }
+    }
 
     std::vector<Candidate> candidates;
     for (const auto& [name, gatePose] : gates) {
@@ -380,6 +424,16 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
         }
         if (visibleCount < minVisibleCorners) {
             continue;
+        }
+        if (canCull) {
+            const Eigen::Vector3d centerCam = tCamWorld.R * center + tCamWorld.t;
+            const double dist = centerCam.norm();
+            if (dist > gateRadius &&
+                std::atan2(std::hypot(centerCam.x(), centerCam.y()), centerCam.z()) -
+                        std::asin(gateRadius / dist) >
+                    thetaMax) {
+                continue;
+            }
         }
 
         // This gate's full rendered silhouette (all outer faces OR-ed minus
@@ -472,6 +526,31 @@ std::vector<GateDetection> detectGates(const std::map<std::string, GatePose>& ga
             maxY = std::max(maxY, kp.y);
         }
         det.boundingBox = BoundingBox{minX, minY, maxX, maxY};
+
+        // Free here: cv::Mat is refcounted, so this shares the buffer the
+        // occlusion test already built rather than rendering the gate a second
+        // time. `GateRenderer::renderDetections` resamples it to the output
+        // resolution afterwards, which is where it stops being free.
+        det.mask = cand.footprint;
+        det.maskBoundingBox = boundingBoxOfMask(cand.footprint);
+
+        // `minVisibleCorners == 0` means "everything in the picture", not
+        // "every gate in the config". Without this the caller also gets the
+        // gates behind the camera and off the far side of the track -- at the
+        // default 3 they are excluded by the corner count, but 0 excludes
+        // nothing, and a gate that projects nowhere has an empty mask, an
+        // empty box and eight `inFrustum = false` keypoints, i.e. nothing to
+        // describe it at all.
+        //
+        // This is the setting that makes the mask worth having: a gate can sit
+        // close and off to one side so that every corner leaves the
+        // `theta < thetaMax` cone while its frame still crosses the image.
+        // Such a gate is dropped at any minVisibleCorners > 0, and the mask is
+        // the only truthful description of it.
+        if (minVisibleCorners == 0 && det.maskBoundingBox.x2 < det.maskBoundingBox.x1) {
+            continue;
+        }
+
         detections.push_back(std::move(det));
     }
     return detections;
