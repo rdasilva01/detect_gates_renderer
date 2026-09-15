@@ -10,22 +10,32 @@ namespace detect_gates {
 // A closed polygon as an ordered list of 3D points.
 using Polygon3d = std::vector<Eigen::Vector3d>;
 
+// Outline of a gate's frame, both outer edge and aperture.
+//
+// Square: sides of `size`. Octagon: regular, its flats on the gate's lateral
+// and vertical axes, `size` across flats -- so both fit the same size x size
+// box. Double: two squares, the second directly on top of the first, with
+// (x, y, z) the bottom one's centre; its faces are the real one-piece frame, a
+// size x 2 * size outline with two apertures. (Masks and detections instead
+// treat a double as its two squares; see scene.cpp.)
+enum class GateShape { Square, Octagon, Double };
+
 struct GateFaces {
-    // 6 faces of the outer box: front outer square, back outer square, then the 4 side walls.
+    // Outer box: front outer ring, back outer ring, then one side wall per ring edge.
     std::vector<Polygon3d> outerFaces;
-    // Front/back inner squares bounding the through-hole.
+    // Front/back inner rings bounding each through-hole, a pair per aperture.
     std::vector<Polygon3d> innerFaces;
 };
 
 // Return world-frame face polygons for a gate.
 //
-// The gate is a square frame (outer square minus inner square) centered at
-// (x, y, z), extruded by `thickness` along its facing direction (the world
-// XY heading given by yaw), symmetric about the configured pose. The
-// frame's lateral/vertical axes (in-plane) are as in the old flat-frame
+// The gate is a frame (outer ring minus inner ring, both of `shape`)
+// centered at (x, y, z), extruded by `thickness` along its facing direction
+// (the world XY heading given by yaw), symmetric about the configured pose.
+// The frame's lateral/vertical axes (in-plane) are as in the old flat-frame
 // model: lateral is perpendicular to yaw in the world XY-plane, vertical is
 // world Z.
-GateFaces gateFaces(double x, double y, double z, double yaw, double outerSize, double innerSize,
+GateFaces gateFaces(GateShape shape, double x, double y, double z, double yaw, double outerSize, double innerSize,
                      double thickness = 0.0);
 
 // Sample points along a closed polygon's perimeter, each edge split into nSegments.

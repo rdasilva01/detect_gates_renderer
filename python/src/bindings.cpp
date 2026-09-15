@@ -1,6 +1,7 @@
 // nanobind module exposing detect_gates::GateRenderer to Python.
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
@@ -88,6 +89,15 @@ NB_MODULE(_detect_gates_renderer, m) {
         .def_rw("y", &Keypoint::y)
         .def_rw("visible", &Keypoint::visible)
         .def_rw("in_frustum", &Keypoint::inFrustum)
+        .def_prop_ro(
+            "world",
+            [](const Keypoint& k) { return std::array<double, 3>{k.world.x(), k.world.y(), k.world.z()}; },
+            "The corner in world coordinates (x, y, z), metres.")
+        .def_prop_ro(
+            "gate_local",
+            [](const Keypoint& k) { return std::array<double, 3>{k.gateLocal.x(), k.gateLocal.y(), k.gateLocal.z()}; },
+            "The corner in its gate's frame (x, y, z), metres: origin at the gate's pose (a double's bottom "
+            "square centre), x lateral, y up, z along the gate's facing normal. For PnP against this gate.")
         .def("__repr__", [](const Keypoint& k) {
             return "Keypoint(name='" + k.name + "', x=" + std::to_string(k.x) + ", y=" + std::to_string(k.y) +
                    ", visible=" + (k.visible ? "True" : "False") +
@@ -124,6 +134,28 @@ NB_MODULE(_detect_gates_renderer, m) {
                 "when no corner is in the frustum.")
         .def("__repr__", [](const GateDetection& d) {
             return "GateDetection(gate='" + d.gate + "', keypoints=" + std::to_string(d.keypoints.size()) + ")";
+        });
+
+    nb::class_<GateEdges>(m, "GateEdges")
+        .def_ro("gate", &GateEdges::gate)
+        .def_prop_ro(
+            "polylines",
+            [](const GateEdges& e) {
+                std::vector<std::vector<std::array<double, 2>>> out;
+                out.reserve(e.polylines.size());
+                for (const auto& polyline : e.polylines) {
+                    std::vector<std::array<double, 2>> points;
+                    points.reserve(polyline.size());
+                    for (const auto& p : polyline) {
+                        points.push_back({p.x, p.y});
+                    }
+                    out.push_back(std::move(points));
+                }
+                return out;
+            },
+            "Visible face edges as open polylines, each a list of (x, y) in output pixels.")
+        .def("__repr__", [](const GateEdges& e) {
+            return "GateEdges(gate='" + e.gate + "', polylines=" + std::to_string(e.polylines.size()) + ")";
         });
 
     nb::class_<GateRenderer>(m, "GateRenderer")
@@ -180,13 +212,25 @@ NB_MODULE(_detect_gates_renderer, m) {
             [](const GateRenderer& self, const DronePose& pose, int minVisibleCorners) {
                 return self.renderDetections(pose, minVisibleCorners);
             },
-            "pose"_a, "min_visible_corners"_a = 3,
+            "pose"_a, "min_visible_corners"_a = 0,
             "Detect per-gate keypoints/bounding boxes for a DronePose.")
         .def(
             "render_detections",
             [](const GateRenderer& self, double x, double y, double z, double roll, double pitch, double yaw,
                int minVisibleCorners) { return self.renderDetections(x, y, z, roll, pitch, yaw, minVisibleCorners); },
-            "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a, "min_visible_corners"_a = 3)
+            "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a, "min_visible_corners"_a = 0)
+        .def(
+            "render_face_edges",
+            [](const GateRenderer& self, const DronePose& pose) { return self.renderFaceEdges(pose); }, "pose"_a,
+            "Each gate's visible face edges for a DronePose, for drawing: the near ring's outer edge and "
+            "aperture and the walls facing the camera, as polylines in output pixels. Stretches hidden "
+            "behind a nearer gate or the gate's own frame are left out.")
+        .def(
+            "render_face_edges",
+            [](const GateRenderer& self, double x, double y, double z, double roll, double pitch, double yaw) {
+                return self.renderFaceEdges(DronePose{x, y, z, roll, pitch, yaw});
+            },
+            "x"_a, "y"_a, "z"_a, "roll"_a, "pitch"_a, "yaw"_a)
         .def_prop_ro("image_width", &GateRenderer::imageWidth)
         .def_prop_ro("image_height", &GateRenderer::imageHeight);
 }

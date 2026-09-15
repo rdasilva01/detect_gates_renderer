@@ -4,7 +4,7 @@ A standalone C++ library for rendering gate-segmentation masks and pose/
 keypoint detections: given a gate layout, a drone pose, and a fisheye camera
 calibration, it can render either a binary segmentation mask of what the
 camera would see (255 = gate frame, 0 = background), or per-gate keypoint
-(4 inner + 4 outer corner) and bounding-box detections with cross-gate
+(inner + outer corner) and bounding-box detections with cross-gate
 occlusion handling.
 
 The segmentation pipeline is a C++ port of the geometry/projection/rendering
@@ -66,19 +66,21 @@ cv::Mat mask = renderer.render(detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.
 
 std::vector<detect_gates::GateDetection> detections = renderer.renderDetections(
     detect_gates::DronePose{19.0, 2.0, 0.155, 0.0, 0.0, 3.13});
-// Optional 2nd arg: minVisibleCorners (default 3) -- gates with fewer than
+// Optional 2nd arg: minVisibleCorners (default 0) -- gates with fewer than
 // this many visible keypoints (before or after cross-gate occlusion) are
 // omitted. Each GateDetection has `gate` (source gate name), `boundingBox`
-// (x1,y1,x2,y2 over visible keypoints only), 8 `keypoints`
-// (4 *_inner + 4 *_outer, each with name/x/y/visible), plus `mask` (this
+// (x1,y1,x2,y2 over visible keypoints only), `keypoints` (the *_inner corners
+// then the *_outer ones, each with name/x/y/visible and the corner in 3D as
+// `world` and `gateLocal`), plus `mask` (this
 // gate's own silhouette) and `maskBoundingBox` (the box of that silhouette).
 ```
 
-Pass `minVisibleCorners = 0` for **everything in the picture** rather than
-everything with enough corners. This is the setting the mask exists for: a gate
+The default, `minVisibleCorners = 0`, returns **everything in the picture**
+rather than everything with enough corners; pass e.g. 3 for only gates with
+that many visible corners. 0 is the setting the mask exists for: a gate
 can sit close and off to one side so that every corner leaves the fisheye's
 `theta < thetaMax` cone while its frame still crosses the image, and such a gate
-is dropped at any threshold above 0 — its `boundingBox` is empty and all eight
+is dropped at any threshold above 0 — its `boundingBox` is empty and all its
 keypoints are `inFrustum = false`, so the mask is the only thing describing it.
 At `0`, gates that project nowhere at all (behind the camera, off the far side
 of the track) are dropped instead of returned empty, so every detection you get
@@ -199,6 +201,92 @@ The lower-level free functions in `scene.hpp` (`loadGatesConfig`,
 available directly if you need more control (e.g. reloading a gate layout
 without re-reading the camera calibration).
 
+## Gate layout
+
+`gates_config.yaml` lists every gate with its own type, pose and dimensions,
+so a track can mix gates of different shapes and sizes. `pose` is
+`[x, y, z, yaw]`, with `z` the frame's centre; the keys under `dimensions`
+depend on the type:
+
+```yaml
+gates:
+  gate01:
+    type: square
+    pose: [12.5, 2.0, 1.45, 3.14159]
+    dimensions: {outer_size: 2.7, inner_size: 1.5, thickness: 0.15}
+```
+
+| type | dimensions | keypoints |
+| --- | --- | --- |
+| `square` | `outer_size`, `inner_size` (side lengths), `thickness` (optional, default 0) | 8 |
+| `octagon` | `outer_size`, `inner_size` (widths across flats), `thickness` (optional, default 0) | 16 |
+| `double` | as `square`, for each of its two squares | 12 |
+
+An octagon is regular with its top and bottom flats horizontal; the 2.7 / 1.9 m
+gate has sides of 1.118 / 0.787 m. A double is two squares, one directly on top
+of the other, and `pose` is the **bottom** square's centre (the top one's is
+`outer_size` higher). Its masks are exactly those of two stacked square gates,
+but it is one gate: one detection, one mask and box, one instance label. Stands
+and bases are not modelled for any type. An unknown type is an error at load
+time.
+
+Keypoints are the frame's corners: the `_inner` ring, then the `_outer` ring,
+each clockwise in the image from the top flat's left end —
+`top_left, top_right, bottom_right, bottom_left` for a square,
+`top_left, top_right, right_top, right_bottom, bottom_right, bottom_left,
+left_bottom, left_top` for an octagon. A double gives its top square's corners
+then its bottom square's, prefixed `top_` / `bottom_`, each in square order but
+without the outer corners where the squares meet (the real frame is one piece
+there): `top_top_left_inner … top_bottom_left_inner, top_top_left_outer,
+top_top_right_outer`, then `bottom_top_left_inner … bottom_bottom_left_inner,
+bottom_bottom_right_outer, bottom_bottom_left_outer`.
+
+Every keypoint also carries its corner in 3D, so detections can be paired with
+3D points, e.g. for PnP:
+
+- `world` — world frame (ENU), metres.
+- `gate_local` (C++ `gateLocal`) — the gate's own frame, metres: origin at the
+  gate's `pose` (a double's bottom square centre), x along the gate's lateral
+  axis `(-sin yaw, cos yaw, 0)`, y up, z along its facing normal
+  `(cos yaw, sin yaw, 0)`. PnP with these gives the camera pose relative to
+  that gate.
+
+Keypoints are the corners of the face nearest the camera, so a corner's 3D
+point moves by the frame's thickness when the camera crosses to the other side
+(z = −thickness/2 from the front, +thickness/2 from behind), and a name's
+left/right follows the image. Always take the point from the keypoint itself
+rather than from a fixed table by name.
+
+```python
+visible = [k for k in detection.keypoints if k.visible]
+object_points = np.array([k.gate_local for k in visible])
+image_points = np.array([(k.x, k.y) for k in visible])
+```
+
+The pixels are in the renderer's output resolution and, by default, fisheye:
+undistort them with the calibration's fisheye model, its intrinsics scaled to
+the output size, before a pinhole `cv2.solvePnP`. A `rectified` renderer's
+pixels are already pinhole; in C++ its camera matrix is
+`rectifiedCameraMatrix()` (projection.hpp), but Python has no accessor for it
+yet.
+
+To see all of this for a pose, `examples/python/view_3d_points.py` shows the
+camera image with the keypoints next to a rotatable 3D plot of the same corners,
+the true camera, and each gate's pose as PnP recovers it from `gate_local` and
+the pixels — drawn as bold axes over the gate's configured frame, with the
+position and orientation errors printed. It also runs one global PnP over the
+whole circuit — every visible corner of every detected gate against its `world`
+point — and turns the camera pose into the drone's position and roll/pitch/yaw,
+drawn and printed next to the true drone. `--pixel-noise SIGMA` moves every
+keypoint's pixel by Gaussian noise (SIGMA px per axis, 3D points untouched) to
+see how both kinds of PnP cope with an imperfect detector; `--seed` repeats a
+draw. It needs matplotlib and PyYAML:
+
+```sh
+python examples/python/view_3d_points.py --x 8.0 --y 10.5 --z 1.6 --yaw 1.5708
+python examples/python/view_3d_points.py --x 8.0 --y 10.5 --z 1.6 --yaw 1.5708 --output view.png
+```
+
 ## Output resolution
 
 By default a mask comes out at the camera calibration's `image_width` /
@@ -219,7 +307,8 @@ above scale the intrinsics for you, leaving the field of view untouched.
 `renderDetections()` keypoints and bounding boxes are returned in
 output-resolution pixels, so they always line up with `render()`'s mask.
 
-Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
+Two things worth knowing when downscaling hard (e.g. 640×640 → 64×64; the
+figures below were measured with an earlier 820×616 calibration):
 
 - `area` (the default) makes the mask **soft**: each output pixel carries the
   fraction of itself covered by gate, so a frame thinner than one output pixel
@@ -233,8 +322,9 @@ Two things worth knowing when downscaling hard (e.g. 820×616 → 64×64):
   pixel: sub-pixel frames get rounded up to a whole one (~+15% mask area at
   64×64) and a soft mask is not possible.
 
-The aspect ratio is not preserved for you — 820×616 → 64×64 squashes
-horizontally (12.8×) more than vertically (9.6×). That is fine provided the
+The aspect ratio is not preserved for you — with a non-square calibration,
+e.g. 820×616 → 64×64, the view is squashed horizontally (12.8×) more than
+vertically (9.6×). That is fine provided the
 real camera images are resized identically; if you letterbox or crop those, do
 the same to the mask.
 
@@ -312,7 +402,7 @@ masks = renderer.render_batch(poses)
 # `OMP_NUM_THREADS=8` beats letting it use every core.
 # Note it does not release the GIL, so other Python threads block for the duration.
 
-detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 3)
+detections = renderer.render_detections(pose)  # optional 2nd arg: min_visible_corners (default 0)
 # Pass 0 for every gate in the picture, including ones whose corners all left the
 # fisheye cone -- those have an empty bounding_box but a real `mask`.
 for d in detections:
@@ -340,11 +430,13 @@ python examples/python/visualize_detections.py --output overlay.png
 ```
 
 `examples/python/live_view.py` is an interactive viewer (Python-only, no C++
-equivalent): it renders continuously in a window (with an FPS counter) and
+equivalent): it renders continuously in a window (with a frame-time readout in ms) and
 lets you fly around in the drone's body frame with the keyboard (arrows =
 forward/back/left/right, w/s = up/down, a/d = yaw, q/e = roll, r/f = pitch,
-Tab = toggle the pose-detection overlay on/off, `1` = toggle the FPS readout,
+Tab = toggle the pose-detection overlay on/off, `1` = toggle the frame-time readout,
 `2` = toggle the full-resolution mask vs. the configured output size,
+`3` = toggle the binary mask vs. instance segmentation (one colour per gate),
+`4` = toggle each gate's visible face edges (`render_face_edges()`),
 Space = toggle rectified vs. raw fisheye view, Esc = quit). Requires a
 GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 
@@ -352,7 +444,7 @@ GUI-enabled OpenCV build (`opencv-python`, not `opencv-python-headless`).
 python examples/python/live_view.py
 ```
 
-Masks smaller than `--display-size` (default 820x616) are upscaled
+Masks smaller than `--display-size` (default 640x640) are upscaled
 nearest-neighbour for viewing, so a renderer configured for 64x64 output still
 gives a readable window — the overlay and text are drawn at full size over the
 mask's real pixel grid. This affects the preview only.

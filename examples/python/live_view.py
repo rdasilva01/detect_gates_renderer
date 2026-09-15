@@ -12,12 +12,14 @@ applied in the drone's current body frame):
   q/e               : roll -/+15 deg
   r/f               : pitch -/+15 deg
   Tab               : toggle pose-detection overlay
-  1                 : toggle the on-screen FPS readout (FPS | GEN_FPS)
+  1                 : toggle the on-screen frame-time readout (LOOP | GEN, ms)
   2                 : toggle full-resolution mask vs. the configured output size
+  3                 : toggle binary mask vs. instance segmentation (one colour per gate)
+  4                 : toggle face edges (lines between each gate's visible faces)
   Space             : toggle rectified (pinhole) vs. raw fisheye view
   Esc               : quit
 
-The mask is upscaled to --display-size (default 820x616) for viewing only, so
+The mask is upscaled to --display-size (default 640x640) for viewing only, so
 that a renderer configured for small masks -- config.yaml's output_width /
 output_height, e.g. 64x64 -- still gives a window big enough to read the
 overlay and text on. Nothing rendered or measured is affected; the mask really
@@ -30,11 +32,19 @@ output size, since both are then the same. Note the full-resolution view is
 not necessarily the slower one: with `native_inter: false` the downscaled mask
 is rendered at full resolution and *then* resampled, so it costs strictly more.
 
-Two rates are shown. FPS is the whole loop: render, overlay, imshow and the
-GUI event pump. Because the window is resizable, imshow rescales the frame to
-it every frame, so FPS drops as you enlarge the window even though nothing
-about the mask changed. GEN_FPS times `renderer.render()` alone -- that is the
-one to read when sizing a dataset run.
+Two frame times are shown, in milliseconds. LOOP is the whole loop: render,
+overlay, imshow and the GUI event pump. Because the window is resizable,
+imshow rescales the frame to it every frame, so LOOP grows as you enlarge the
+window even though nothing about the mask changed. GEN times the render call
+alone -- `renderer.render()`, or `render_segmented()` in the instance view --
+that is the one to read when sizing a dataset run.
+
+`3` shows `render_segmented()`'s instance labels instead of the binary mask,
+each gate in its own colour. `4` draws each gate's visible face edges in
+magenta: the near ring's outer edge and aperture, and the walls facing the
+camera, so the frame's front face, its outside walls and the inside of the
+aperture read as separate regions. Stretches hidden behind a nearer gate, or
+behind the gate's own frame, are left out.
 
 Requires a GUI-enabled OpenCV build (plain `opencv-python`, not
 `opencv-python-headless`) and a display.
@@ -100,11 +110,20 @@ def draw_pose_overlay(frame: np.ndarray, renderer: GateRenderer, x: float, y: fl
     has been upscaled for viewing they have to be scaled the same way or the
     whole overlay bunches up in the top-left corner.
     """
-    for d in renderer.render_detections(x, y, z, roll, pitch, yaw):
-        top_left = (int(d.bounding_box.x1 * scale_x), int(d.bounding_box.y1 * scale_y))
-        bottom_right = (int(d.bounding_box.x2 * scale_x), int(d.bounding_box.y2 * scale_y))
-        cv2.rectangle(frame, top_left, bottom_right, (0, 255, 255), 1)
-        cv2.putText(frame, d.gate, (top_left[0], top_left[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+    # min_visible_corners=0: every gate with something in the picture, including
+    # ones with no corner in view, which get a box but no keypoints.
+    for d in renderer.render_detections(x, y, z, roll, pitch, yaw, 0):
+        # The box of the gate's silhouette, not of its visible corners, so it
+        # covers the frame's depth and fisheye-bowed edges. Empty (inf) when
+        # the mask has no pixel left.
+        box = d.mask_bounding_box
+        if np.isfinite(box.x1):
+            # Inclusive pixel indices: pixel x2 reaches x2 + 1 once upscaled.
+            top_left = (int(box.x1 * scale_x), int(box.y1 * scale_y))
+            bottom_right = (int((box.x2 + 1) * scale_x) - 1, int((box.y2 + 1) * scale_y) - 1)
+            cv2.rectangle(frame, top_left, bottom_right, (0, 255, 255), 1)
+            cv2.putText(frame, d.gate, (top_left[0], top_left[1] - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.4,
+                        (0, 255, 255), 1)
 
         for k in d.keypoints:
             if not k.in_frustum:
@@ -114,6 +133,27 @@ def draw_pose_overlay(frame: np.ndarray, renderer: GateRenderer, x: float, y: fl
             cv2.circle(frame, center, 3, color, cv2.FILLED)
             cv2.putText(frame, abbreviate(k.name), (center[0] + 4, center[1] + 4), cv2.FONT_HERSHEY_SIMPLEX, 0.3,
                         color, 1)
+
+
+_EDGE_COLOR = (255, 0, 255)  # magenta: clear of white, black and the overlay's green/red/yellow
+
+
+def draw_face_edges(frame: np.ndarray, renderer: GateRenderer, x: float, y: float, z: float, roll: float,
+                    pitch: float, yaw: float, scale_x: float = 1.0, scale_y: float = 1.0) -> None:
+    """Draw each gate's visible face edges onto `frame`, scaled like the pose overlay."""
+    scale = np.array([scale_x, scale_y])
+    for gate in renderer.render_face_edges(x, y, z, roll, pitch, yaw):
+        lines = [np.round(np.asarray(line) * scale).astype(np.int32) for line in gate.polylines]
+        cv2.polylines(frame, lines, False, _EDGE_COLOR, 1, cv2.LINE_AA)
+
+
+def instance_palette() -> np.ndarray:
+    """BGR colour for each instance label: 0 (background) black, then golden-ratio-spaced hues."""
+    hsv = np.zeros((256, 1, 3), np.uint8)
+    hsv[1:, 0, 0] = (np.arange(1, 256) * 0.618033988749895 * 180) % 180
+    hsv[1:, 0, 1] = 200
+    hsv[1:, 0, 2] = 255
+    return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)[:, 0, :]
 
 
 def config_without_output_size(config_path: str) -> str | None:
@@ -191,8 +231,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--roll", type=float, default=0.0)
     parser.add_argument("--pitch", type=float, default=0.0)
     parser.add_argument("--yaw", type=float, default=3.13)
-    parser.add_argument("--display-size", type=parse_size, default=(820, 616), metavar="WxH",
-                         help="upscale the mask to this size for viewing only (default: 820x616). "
+    parser.add_argument("--display-size", type=parse_size, default=(640, 640), metavar="WxH",
+                         help="upscale the mask to this size for viewing only (default: 640x640). "
                               "Masks already this size or larger are shown untouched.")
     parser.add_argument("--debug-keys", action="store_true",
                          help="print every key code received, to help map unrecognized arrow keys")
@@ -206,24 +246,30 @@ def main() -> None:
     pos = np.array([args.x, args.y, args.z])
     roll, pitch, yaw = args.roll, args.pitch, args.yaw
     show_pose = True
-    show_fps = True
+    show_ms = True
+    show_instances = False
+    show_edges = False
     full_res = False
     rectified = args.rectified
     display_width, display_height = args.display_size
+    palette = instance_palette()
 
     window = "live_view"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     print(__doc__)
 
-    ema_fps = 0.0
-    ema_gen_fps = 0.0
+    ema_ms = 0.0
+    ema_gen_ms = 0.0
     prev_time = time.perf_counter()
 
     while True:
         renderer = renderers[(rectified, full_res)]
         x, y, z = float(pos[0]), float(pos[1]), float(pos[2])
         render_start = time.perf_counter()
-        mask = renderer.render(x, y, z, roll, pitch, yaw)
+        if show_instances:
+            mask = renderer.render_segmented(x, y, z, roll, pitch, yaw)[1]
+        else:
+            mask = renderer.render(x, y, z, roll, pitch, yaw)
         render_dt = time.perf_counter() - render_start
 
         # Viewing only. Nearest-neighbour so the upscale shows the mask's real
@@ -237,30 +283,37 @@ def main() -> None:
         else:
             scale_x = scale_y = 1.0
 
-        frame = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR) if show_pose else view
+        if show_instances:
+            frame = palette[view]
+        elif show_pose or show_edges:
+            frame = cv2.cvtColor(view, cv2.COLOR_GRAY2BGR)
+        else:
+            frame = view
 
         now = time.perf_counter()
         dt = now - prev_time
         prev_time = now
-        # FPS is the whole loop -- render, overlay, imshow, the GUI event pump --
-        # so it moves when you resize the window. GEN_FPS is `render()` alone,
-        # which is the number that says how fast masks can actually be produced.
-        if dt > 0:
-            ema_fps = 0.9 * ema_fps + 0.1 * (1.0 / dt) if ema_fps > 0 else 1.0 / dt
-        if render_dt > 0:
-            gen_fps = 1.0 / render_dt
-            ema_gen_fps = 0.9 * ema_gen_fps + 0.1 * gen_fps if ema_gen_fps > 0 else gen_fps
+        # LOOP is the whole loop -- render, overlay, imshow, the GUI event pump --
+        # so it moves when you resize the window. GEN is `render()` alone, which
+        # is the number that says how fast masks can actually be produced.
+        loop_ms = 1000.0 * dt
+        gen_ms = 1000.0 * render_dt
+        ema_ms = 0.9 * ema_ms + 0.1 * loop_ms if ema_ms > 0 else loop_ms
+        ema_gen_ms = 0.9 * ema_gen_ms + 0.1 * gen_ms if ema_gen_ms > 0 else gen_ms
 
+        if show_edges:
+            draw_face_edges(frame, renderer, x, y, z, roll, pitch, yaw, scale_x, scale_y)
         if show_pose:
             draw_pose_overlay(frame, renderer, x, y, z, roll, pitch, yaw, scale_x, scale_y)
-        if show_fps:
+        if show_ms:
             color = (0, 255, 255) if show_pose else (255, 255, 255)
-            cv2.putText(frame, f"FPS: {ema_fps:.1f} | GEN_FPS: {ema_gen_fps:.1f}", (10, 25),
+            cv2.putText(frame, f"LOOP: {ema_ms:.2f} ms | GEN: {ema_gen_ms:.2f} ms", (10, 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
         cv2.imshow(window, frame)
         print(f"\rpos=({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})  rpy=({roll:.2f}, {pitch:.2f}, {yaw:.2f})  "
-              f"fps={ema_fps:.1f}  gen_fps={ema_gen_fps:.1f}  rectified={rectified}  "
+              f"loop={ema_ms:.2f}ms  gen={ema_gen_ms:.2f}ms  rectified={rectified}  "
+              f"view={'instances' if show_instances else 'binary'}  edges={show_edges}  "
               f"mask={renderer.image_width}x{renderer.image_height}  ", end="", flush=True)
 
         key = cv2.waitKeyEx(1)
@@ -274,10 +327,16 @@ def main() -> None:
             show_pose = not show_pose
             continue
         if ascii_key == ord("1"):
-            show_fps = not show_fps
+            show_ms = not show_ms
             continue
         if ascii_key == ord("2"):
             full_res = not full_res
+            continue
+        if ascii_key == ord("3"):
+            show_instances = not show_instances
+            continue
+        if ascii_key == ord("4"):
+            show_edges = not show_edges
             continue
         if ascii_key == ord(" "):
             rectified = not rectified

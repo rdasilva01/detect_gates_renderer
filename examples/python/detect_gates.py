@@ -46,7 +46,8 @@ def main() -> None:
                     "x2": d.bounding_box.x2,
                     "y2": d.bounding_box.y2,
                 },
-                "keypoints": [{"name": k.name, "x": k.x, "y": k.y, "visible": k.visible} for k in d.keypoints],
+                "keypoints": [{"name": k.name, "x": k.x, "y": k.y, "visible": k.visible,
+                               "world": list(k.world), "gate_local": list(k.gate_local)} for k in d.keypoints],
             }
             for d in detections
         ]
